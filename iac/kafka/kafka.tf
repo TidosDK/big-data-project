@@ -10,7 +10,8 @@ resource "helm_release" "kafka_helm_chart" {
 }
 
 resource "kubernetes_manifest" "kafka_schema_registry_configmap" {
-  manifest = yamldecode(file("${path.module}/kafka-schema-registry-configmap.yaml"))
+  manifest   = yamldecode(file("${path.module}/kafka-schema-registry-configmap.yaml"))
+  depends_on = [helm_release.kafka_helm_chart]
 }
 
 resource "kubernetes_manifest" "kafka_schema_registry_deployment" {
@@ -24,7 +25,8 @@ resource "kubernetes_manifest" "kafka_schema_registry_service" {
 }
 
 resource "kubernetes_manifest" "kafka_connect_pvc" {
-  manifest = yamldecode(file("${path.module}/kafka-connect-pvc.yaml"))
+  manifest   = yamldecode(file("${path.module}/kafka-connect-pvc.yaml"))
+  depends_on = [helm_release.kafka_helm_chart]
 }
 
 resource "kubernetes_manifest" "kafka_connect_configmap" {
