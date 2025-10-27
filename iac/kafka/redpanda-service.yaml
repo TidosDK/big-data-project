@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: redpanda
+  namespace: bd-bd-gr-02
+spec:
+  selector:
+    app: redpanda
+  ports:
+    - name: web
+      protocol: TCP
+      port: 8080
+      targetPort: 8080
