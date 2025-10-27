@@ -5,3 +5,7 @@ module "hdfs" {
 module "kafka" {
   source = "./kafka"
 }
+
+module "spark" {
+  source = "./spark"
+}

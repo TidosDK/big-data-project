@@ -1,6 +1,6 @@
 resource "helm_release" "kafka_helm_chart" {
   name      = "kafka"
-  namespace = var.namespace
+  namespace = "bd-bd-gr-02"
 
   repository = "oci://registry-1.docker.io/bitnamicharts"
   chart      = "kafka"
