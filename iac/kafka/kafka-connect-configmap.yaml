@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kafka-connect-config
+  namespace: bd-bd-gr-02
+data:
+  HADOOP_USER_NAME: "root"
+  CONNECT_BOOTSTRAP_SERVERS: "kafka:9092"
+  CONNECT_REST_PORT: "8083"
+  CONNECT_GROUP_ID: "kafka-connect-group-id-01"
+  CONNECT_CONFIG_STORAGE_TOPIC: "_connect-configs"
+  CONNECT_OFFSET_STORAGE_TOPIC: "_connect-offsets"
+  CONNECT_STATUS_STORAGE_TOPIC: "_connect-status"
+  CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: "1"
+  CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: "1"
+  CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: "1"
+  CONNECT_PLUGIN_PATH: "/usr/share/java,/usr/share/confluent-hub-components,/data/connect-jars"
+  CONNECT_KEY_CONVERTER: "io.confluent.connect.avro.AvroConverter"
+  CONNECT_KEY_CONVERTER_SCHEMA_REGISTRY_URL: "http://kafka-schema-registry:8081"
+  CONNECT_VALUE_CONVERTER: "io.confluent.connect.avro.AvroConverter"
+  CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: "http://kafka-schema-registry:8081"
+  CONNECT_INTERNAL_KEY_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+  CONNECT_INTERNAL_VALUE_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"

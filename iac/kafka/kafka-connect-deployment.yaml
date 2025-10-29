@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka-connect
+  namespace: bd-bd-gr-02
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafka-connect
+  template:
+    metadata:
+      labels:
+        app: kafka-connect
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+      volumes:
+        - name: kafka-connect-pv-storage
+          persistentVolumeClaim:
+            claimName: kafka-connect-pvc
+      imagePullSecrets:
+        - name: ghcr-secret
+      containers:
+        - name: kafka-connect
+          image: ghcr.io/jakobhviidbddst/bigdatacourseexercises-kafka-connect:sha-76a8c3c
+          # image: registry.gitlab.sdu.dk/jah/bigdatarepo/kafka-connect:7.3.1
+          securityContext:
+            allowPrivilegeEscalation: false
+          volumeMounts:
+            - mountPath: "/data/"
+              name: kafka-connect-pv-storage
+          envFrom:
+            - configMapRef:
+                name: kafka-connect-config
+          env:
+            - name: CONNECT_REST_ADVERTISED_HOST_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
