@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: energy-producer
+  namespace: bd-bd-gr-02
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: energy-producer
+  template:
+    metadata:
+      labels:
+        app: energy-producer
+    spec:
+      containers:
+        - name: energy-producer
+          image: python:3.12-slim
+          imagePullPolicy: IfNotPresent
+          workingDir: /app
+          command: ["bash", "-lc"]
+          args:
+            - >
+              pip install --no-cache-dir confluent-kafka requests &&
+              python /app/energynet-producer.py
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "kafka:9092"
+            - name: KAFKA_TOPIC
+              value: "energy_data"
+            - name: API_URL
+              value: "https://api.energidataservice.dk/dataset/PrivateConsumptionHeatingHour?limit=100"
+            - name: POLL_SECONDS
+              value: "60"
+          volumeMounts:
+            - name: producer-code
+              mountPath: /app
+      volumes:
+        - name: producer-code
+          configMap:
+            name: energy-producer-configmap
+            items:
+              - key: energynet-producer.py
+                path: energynet-producer.py

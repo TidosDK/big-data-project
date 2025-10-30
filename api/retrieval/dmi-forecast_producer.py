@@ -1,0 +1,56 @@
+from confluent_kafka import Producer, KafkaException
+import requests, json, time, signal, sys, os
+
+BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
+TOPIC = os.getenv("KAFKA_TOPIC", "meterological_observations")
+API_BASE = os.getenv("API_URL", "dmi.dk")
+API_KEY = os.getenv("API_KEY")
+POLL_SECS = int(os.getenv("POLL_SECONDS", "60")) # Changable
+
+API = f"{API_BASE}?api-key={API_KEY}"
+
+dmi_producer = Producer({
+    "bootstrap.servers": BOOTSTRAP,
+    "compression.type": "gzip",
+    "linger.ms": 50,
+    "batch.num.messages": 500,
+})
+
+def on_delivery(err, msg):
+    if err:
+        print(f"Delivery failed: {err}", file=sys.stderr)
+
+signal.signal(signal.SIGINT, lambda *_: sys.exit(0))
+signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+
+try:
+    while True:
+        try:
+            response = requests.get(API, timeout=20)
+            response.raise_for_status()
+            payload = response.json()
+
+            if isinstance(payload, list):
+                records = payload
+            else:
+                records = payload.get("records") or payload.get("result")
+                if isinstance(records, dict) and "records" in records:
+                    records = records["records"]
+                records = records if isinstance(records, list) else [payload]
+
+            for record in records:
+                dmi_producer.produce(TOPIC, value=json.dumps(record), on_delivery=on_delivery)
+                dmi_producer.poll(0)
+
+            for _ in range(10):
+                dmi_producer.poll(0.1)
+
+            print(f"Produced {len(records)} record(s) to {TOPIC}")
+        except Exception as e:
+            print(f"HTTP/produce error: {e}", file=sys.stderr)
+        time.sleep(POLL_SECS)
+finally:
+    try:
+        dmi_producer.flush(10)
+    except KafkaException as e:
+        print(f"flush error: {e}", file=sys.stderr)
