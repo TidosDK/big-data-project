@@ -6,7 +6,7 @@ consumer = Consumer({
     'auto.offset.reset': 'earliest'
 })
 
-consumer.subscribe(['api'])
+consumer.subscribe(['energy_data'])
 
 while True:
     msg = consumer.poll(1.0)
