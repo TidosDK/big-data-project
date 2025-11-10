@@ -1,0 +1,25 @@
+{
+  "name": "kafka-to-hdfs-energy-data",
+  "config": {
+    "connector.class": "io.confluent.connect.hdfs.HdfsSinkConnector",
+    "topics": "energy_data",
+    "tasks.max": "8",
+
+    "store.url": "hdfs://namenode:9000",
+
+    "consumer.override.auto.offset.reset": "earliest",
+
+    "format.class": "io.confluent.connect.hdfs.json.JsonFormat",
+    "flush.size": "200000",
+    "rotate.interval.ms": "900000",
+    "rotate.schedule.interval.ms": "-1",
+
+    "key.converter.schemas.enable": "false",
+    "key.converter": "org.apache.kafka.connect.storage.StringConverter",
+    "key.converter.schema.registry.url": "http://kafka-schema-registry:8081",
+
+    "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "value.converter.schemas.enable": "false",
+    "value.converter.schema.registry.url": "https://kafka-schema-reg:8081"
+  }
+}
