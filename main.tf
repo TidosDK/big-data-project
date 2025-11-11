@@ -1,3 +1,0 @@
-module "hdfs" {
-  source = "./hdfs"
-}
