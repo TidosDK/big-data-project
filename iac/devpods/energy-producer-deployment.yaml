@@ -29,9 +29,9 @@ spec:
             - name: KAFKA_TOPIC
               value: "energy_data"
             - name: API_URL
-              value: "https://api.energidataservice.dk/dataset/PrivateConsumptionHeatingHour?limit=100"
+              value: "https://api.energidataservice.dk/dataset/PrivateConsumptionHeatingHour"
             - name: POLL_SECONDS
-              value: "60"
+              value: "20"
           volumeMounts:
             - name: producer-code
               mountPath: /app
