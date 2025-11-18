@@ -16,12 +16,12 @@ spec:
       containers:
         - name: energy-producer
           image: python:3.12-slim
-          imagePullPolicy: IfNotPresent
           workingDir: /app
           command: ["bash", "-lc"]
           args:
             - >
-              pip install --no-cache-dir confluent-kafka requests &&
+              pip install --no-cache-dir confluent-kafka requests python-dateutil &&
+              mkdir -p /data &&
               python /app/energynet-producer.py
           env:
             - name: KAFKA_BOOTSTRAP_SERVERS
@@ -35,6 +35,8 @@ spec:
           volumeMounts:
             - name: producer-code
               mountPath: /app
+            - name: state-volume
+              mountPath: /data
       volumes:
         - name: producer-code
           configMap:
@@ -42,3 +44,6 @@ spec:
             items:
               - key: energynet-producer.py
                 path: energynet-producer.py
+        - name: state-volume
+          emptyDir: {}
+
