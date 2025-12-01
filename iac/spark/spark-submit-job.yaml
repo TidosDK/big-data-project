@@ -1,0 +1,43 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: spark-stream-historic-job3
+  namespace: bd-bd-gr-02
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: spark-submit
+          image: apache/spark:4.1.0-preview4-scala2.13-java21-python3-r-ubuntu
+          imagePullPolicy: IfNotPresent
+          command: ["/opt/spark/bin/spark-submit"]
+          args:
+            - "--master"
+            - "spark://spark-master:7077"
+            - "--deploy-mode"
+            - "client"
+            - "--name"
+            - "stream-and-historic"
+            - "--conf"
+            - "spark.executor.instances=2"
+            - "--conf"
+            - "spark.executor.memory=2g"
+            - "--conf"
+            - "spark.driver.memory=1g"
+            - "/opt/spark/app/stream_and_historic.py"
+          volumeMounts:
+            - name: app
+              mountPath: /opt/spark/app
+      volumes:
+        - name: app
+          configMap:
+            name: spark-stream-app
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spark-stream-app
+data:
+  stream_and_historic.py: |
