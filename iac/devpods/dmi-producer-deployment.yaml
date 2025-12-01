@@ -16,12 +16,12 @@ spec:
       containers:
         - name: dmi-producer
           image: python:3.12-slim
-          imagePullPolicy: IfNotPresent
           workingDir: /app
           command: ["bash", "-lc"]
           args:
             - >
-              pip install --no-cache-dir confluent-kafka requests &&
+              pip install --no-cache-dir confluent-kafka requests python-dateutil &&
+              mkdir -p /data &&
               python /app/dmi-forecast_producer.py
           env:
             - name: KAFKA_BOOTSTRAP_SERVERS
@@ -29,14 +29,19 @@ spec:
             - name: KAFKA_TOPIC
               value: "meterological_observations"
             - name: API_URL
-              value: "dmi.dk"
+              value: "https://dmigw.govcloud.dk/v2/metObs/collections/observation/items"
             - name: API_KEY
-              value: 
+              valueFrom:
+                secretKeyRef:
+                  name: dmi-api-key
+                  key: API_KEY
             - name: POLL_SECONDS
-              value: "60"
+              value: "20"
           volumeMounts:
             - name: producer-code
               mountPath: /app
+            - name: state-volume
+              mountPath: /data
       volumes:
         - name: producer-code
           configMap:
@@ -44,3 +49,5 @@ spec:
             items:
               - key: dmi-forecast_producer.py
                 path: dmi-forecast_producer.py
+        - name: state-volume
+          emptyDir: {}
