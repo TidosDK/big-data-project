@@ -3,7 +3,7 @@ import requests, json, time, signal, sys, os
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
-limit = 50000
+limit = 10000
 offset = 0
 STATE_FILE = "/data/dmi_last_date.json"
 
