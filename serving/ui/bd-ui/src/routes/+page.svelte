@@ -1,5 +1,4 @@
 <script lang="javascript">
-  
   let data = $state([]);
   let useMockData = $state(true);
   let failureCount = $state(0);
