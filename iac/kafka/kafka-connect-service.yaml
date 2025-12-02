@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-connect
+  namespace: bd-bd-gr-02
+spec:
+  type: NodePort
+  ports:
+    - port: 8083
+      targetPort: 8083
+  selector:
+    app: kafka-connect
