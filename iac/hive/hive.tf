@@ -1,5 +1,5 @@
-resource "helm_release" "postgresql_hive" {
-  name      = "postgresql-hive"
+resource "helm_release" "postgresql" {
+  name      = "postgresql"
   namespace = "bd-bd-gr-02"
 
   repository = "https://charts.bitnami.com/bitnami"
@@ -11,7 +11,7 @@ resource "helm_release" "postgresql_hive" {
 
 resource "kubernetes_manifest" "hive_pvc" {
   manifest   = yamldecode(file("${path.module}/hive-pvc.yaml"))
-  depends_on = [helm_release.postgresql_hive]
+  depends_on = [helm_release.postgresql]
 }
 
 resource "kubernetes_manifest" "hive_deployment" {
