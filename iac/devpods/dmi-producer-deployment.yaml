@@ -13,6 +13,7 @@ spec:
       labels:
         app: dmi-producer
     spec:
+      terminationGracePeriodSeconds: 60
       containers:
         - name: dmi-producer
           image: python:3.12-slim
@@ -50,4 +51,5 @@ spec:
               - key: dmi-forecast_producer.py
                 path: dmi-forecast_producer.py
         - name: state-volume
-          emptyDir: {}
+          persistentVolumeClaim:
+            claimName: dmi-producer-state-pvc
