@@ -10,16 +10,46 @@ spec:
       restartPolicy: Never
       containers:
         - name: spark-submit
-          image: apache/spark:4.1.0-preview4-scala2.13-java21-python3-r-ubuntu
+          image: bitnami/spark:3.5.2-debian-12-r1
           imagePullPolicy: IfNotPresent
-          command: ["/opt/spark/bin/spark-submit"]
+
+
+          env:
+            - name: SPARK_DRIVER_HOST
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: SPARK_USER
+              value: "root"
+            - name: HADOOP_USER_NAME
+              value: "root"
+            - name: HOME
+              value: /tmp
+
+
+          securityContext:
+            runAsUser: 0
+
+          command: ["/opt/bitnami/spark/bin/spark-submit"]
           args:
             - "--master"
-            - "spark://spark-master:7077"
+            - "spark://spark-master-0.spark-headless.bd-bd-gr-02.svc.cluster.local:7077"
             - "--deploy-mode"
             - "client"
             - "--name"
             - "stream-and-historic"
+
+            - "--packages"
+            - "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.2"
+
+            - "--conf"
+            - "spark.driver.extraJavaOptions=-Duser.home=/tmp -Duser.name=spark"
+
+
+            - "--conf"
+            - "spark.driver.bindAddress=$(SPARK_DRIVER_HOST)"
+            - "--conf"
+            - "spark.driver.host=$(SPARK_DRIVER_HOST)"
             - "--conf"
             - "spark.executor.instances=2"
             - "--conf"
@@ -27,17 +57,11 @@ spec:
             - "--conf"
             - "spark.driver.memory=1g"
             - "/opt/spark/app/stream_and_historic.py"
+
           volumeMounts:
             - name: app
               mountPath: /opt/spark/app
       volumes:
         - name: app
           configMap:
-            name: spark-stream-app
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: spark-stream-app
-data:
-  stream_and_historic.py: |
+            name: spark-job-configmap

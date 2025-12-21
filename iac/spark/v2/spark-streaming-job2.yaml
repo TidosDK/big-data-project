@@ -1,0 +1,52 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: spark-stream-legacy-queue-v2
+  namespace: bd-bd-gr-02
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: spark-streaming
+          image: bitnami/spark:3.5.2-debian-12-r1
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: SPARK_DRIVER_HOST
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            # Setup PYTHONPATH to find the pip installed modules
+            - name: PYTHONPATH
+              value: "/tmp/pyspark_lib:/opt/bitnami/spark/python/lib/py4j-0.10.9.7-src.zip:/opt/bitnami/spark/python"
+          securityContext:
+            runAsUser: 0
+          command: [ "/bin/bash", "-c" ]
+          args:
+            - |
+              echo ">>> Installing kafka-python..."
+              pip install kafka-python --target=/tmp/pyspark_lib
+              
+              echo ">>> Starting Spark..."
+              /opt/bitnami/spark/bin/spark-submit \
+              --master spark://spark-master-0.spark-headless.bd-bd-gr-02.svc.cluster.local:7077 \
+              --deploy-mode client \
+              --name energy-weather-legacy-queue \
+              --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.2 \
+              --conf "spark.driver.bindAddress=$(SPARK_DRIVER_HOST)" \
+              --conf "spark.driver.host=$(SPARK_DRIVER_HOST)" \
+              --conf "spark.driver.extraJavaOptions=-XX:+UseG1GC" \
+              --conf "spark.executor.extraJavaOptions=-XX:+UseG1GC" \
+              --conf "spark.executor.instances=2" \
+              --conf "spark.executor.memory=4g" \
+              --conf "spark.driver.memory=6g" \
+              /opt/spark/app/spark-streaming-job2.py
+
+          volumeMounts:
+            - name: app
+              mountPath: /opt/spark/app
+      volumes:
+        - name: app
+          configMap:
+            name: spark-streaming-configmap-v2

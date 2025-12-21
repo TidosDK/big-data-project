@@ -1,0 +1,165 @@
+apiVersion: v1
+data:
+  stream_and_historic.py: |
+      import sys
+      import os
+      import urllib.request
+      
+      # --- 1. PATCH: DOWNLOAD MISSING KAFKA WRAPPER ---
+      # We download to /tmp because the script folder (ConfigMap) is Read-Only.
+      # Correct URL for Spark 3.5.2 connector source:
+      KAFKA_MODULE_URL = "https://raw.githubusercontent.com/apache/spark/v3.5.2/connector/kafka-0-10/src/main/python/pyspark/streaming/kafka010.py"
+      LOCAL_MODULE_PATH = "/tmp/kafka010.py"
+      
+      if not os.path.exists(LOCAL_MODULE_PATH):
+          print(f"Downloading missing Kafka 0.10 wrapper to {LOCAL_MODULE_PATH}...")
+          try:
+              urllib.request.urlretrieve(KAFKA_MODULE_URL, LOCAL_MODULE_PATH)
+              print("Download successful.")
+          except Exception as e:
+              print(f"Failed to download wrapper: {e}")
+              # If 3.5.2 fails, try the generic master branch as fallback (rarely needed)
+              try:
+                  print("Retrying with master branch...")
+                  FALLBACK_URL = "https://raw.githubusercontent.com/apache/spark/master/connector/kafka-0-10/src/main/python/pyspark/streaming/kafka010.py"
+                  urllib.request.urlretrieve(FALLBACK_URL, LOCAL_MODULE_PATH)
+              except Exception as e2:
+                   print(f"Fatal error downloading wrapper: {e2}")
+                   sys.exit(1)
+      
+      # Add /tmp to system path so we can import the file we just downloaded
+      sys.path.insert(0, "/tmp")
+      
+      # --- IMPORTS ---
+      from pyspark import SparkContext
+      from pyspark.streaming import StreamingContext
+      from pyspark.sql import SparkSession
+      from pyspark.sql.functions import col, to_timestamp, date_trunc, to_json, struct
+      from pyspark.sql.types import StructType, StructField, StringType, DoubleType
+      
+      # IMPORT THE DOWNLOADED MODULE
+      # This acts exactly like 'from pyspark.streaming.kafka010 import ...'
+      try:
+          import kafka010
+          from kafka010 import KafkaUtils, LocationStrategies, ConsumerStrategies
+          print("Successfully imported KafkaUtils from downloaded patch.")
+      except ImportError as e:
+          print(f"Failed to import kafka010: {e}")
+          sys.exit(1)
+      
+      # --- 2. SETUP CONTEXTS ---
+      sc = SparkContext(appName="EnergyWeatherLegacy_Fixed")
+      sc.setLogLevel("WARN")
+      ssc = StreamingContext(sc, 5)
+      
+      def getSparkSessionInstance(sparkConf):
+          if ("sparkSessionSingletonInstance" not in globals()):
+              globals()["sparkSessionSingletonInstance"] = SparkSession \
+                  .builder \
+                  .config(conf=sparkConf) \
+                  .getOrCreate()
+          return globals()["sparkSessionSingletonInstance"]
+      
+      # --- 3. DEFINE KAFKA PARAMETERS ---
+      kafka_params = {
+          "bootstrap.servers": "kafka:9092",
+          "group.id": "legacy_project_group_final",
+          "auto.offset.reset": "earliest",
+          "key.deserializer": "org.apache.kafka.common.serialization.StringDeserializer",
+          "value.deserializer": "org.apache.kafka.common.serialization.StringDeserializer"
+      }
+      
+      # --- 4. CREATE DSTREAMS ---
+      print("Creating Energy Stream...")
+      energy_stream = KafkaUtils.createDirectStream(
+          ssc,
+          LocationStrategies.PreferConsistent,
+          ConsumerStrategies.Subscribe(["energy_data"], kafka_params)
+      )
+      
+      print("Creating Weather Stream...")
+      weather_stream = KafkaUtils.createDirectStream(
+          ssc,
+          LocationStrategies.PreferConsistent,
+          ConsumerStrategies.Subscribe(["meterological_observations"], kafka_params)
+      )
+      
+      # --- 5. PROCESSING LOGIC ---
+      energy_windowed = energy_stream.window(60, 5)
+      weather_windowed = weather_stream.window(60, 5)
+      
+      energy_tagged = energy_windowed.map(lambda x: ("energy", x.value()))
+      weather_tagged = weather_windowed.map(lambda x: ("weather", x.value()))
+      
+      unified_stream = energy_tagged.union(weather_tagged)
+      
+      def process_unified_batch(time, rdd):
+          if rdd.isEmpty():
+              return
+      
+          print(f"========= Batch Time: {str(time)} =========")
+          spark = getSparkSessionInstance(rdd.context.getConf())
+      
+          # Schemas
+          energy_schema = StructType([
+              StructField("TimeUTC", StringType(), True),
+              StructField("TimeDK", StringType(), True),
+              StructField("HeatingCategory", StringType(), True),
+              StructField("ConsumptionkWh", DoubleType(), True)
+          ])
+      
+          met_schema = StructType([
+              StructField("properties", StructType([
+                  StructField("observed", StringType(), True)
+              ]))
+          ])
+      
+          # Filter RDDs
+          energy_rdd = rdd.filter(lambda x: x[0] == "energy").map(lambda x: x[1])
+          weather_rdd = rdd.filter(lambda x: x[0] == "weather").map(lambda x: x[1])
+      
+          if energy_rdd.isEmpty():
+              print("No Energy data in this window.")
+              return
+      
+          # Create DataFrames
+          df_energy = spark.read.schema(energy_schema).json(energy_rdd)
+          df_weather = spark.read.schema(met_schema).json(weather_rdd)
+      
+          # Transformations
+          df_energy = df_energy.withColumn("event_ts_energy", to_timestamp(col("TimeUTC"), "yyyy-MM-dd'T'HH:mm:ss")) \
+              .withColumn("join_hour", date_trunc("hour", col("event_ts_energy")))
+      
+          df_weather = df_weather.select(col("properties.observed").alias("observed_time")) \
+              .withColumn("event_ts_weather", to_timestamp(col("observed_time"), "yyyy-MM-dd'T'HH:mm:ssX")) \
+              .withColumn("join_hour", date_trunc("hour", col("event_ts_weather")))
+      
+          # Join
+          joined_df = df_energy.join(df_weather, on="join_hour", how="left")
+      
+          # Output to Kafka
+          output_df = joined_df.select(
+              col("TimeUTC").alias("key"),
+              to_json(struct("*")).alias("value")
+          )
+      
+          try:
+              output_df.write \
+                  .format("kafka") \
+                  .option("kafka.bootstrap.servers", "kafka:9092") \
+                  .option("topic", "processed_data") \
+                  .save()
+              print(f"Batch written to Kafka. Rows: {output_df.count()}")
+          except Exception as e:
+              print(f"Skipping Kafka write: {e}")
+      
+      unified_stream.foreachRDD(process_unified_batch)
+      
+      ssc.start()
+      ssc.awaitTermination()
+
+kind: ConfigMap
+metadata:
+  creationTimestamp: null
+  name: spark-job-configmap
+  namespace: bd-bd-gr-02
