@@ -3,14 +3,21 @@ import time
 import json
 import threading
 from kafka import KafkaConsumer
-from pyspark import SparkContext
+from pyspark import SparkContext, SparkConf  # Added SparkConf
 from pyspark.streaming import StreamingContext
 from pyspark.streaming.dstream import DStream
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, to_timestamp, date_trunc, to_json, struct
 from pyspark.sql.types import StructType, StructField, StringType, DoubleType
 
-sc = SparkContext(appName="EnergyWeather_DynamicQueue")
+
+conf = SparkConf() \
+    .setAppName("EnergyWeather_Spark") \
+    .set("spark.serializer", "org.apache.spark.serializer.KryoSerializer") \
+    .set("spark.kryoserializer.buffer.max", "512m") \
+    .set("spark.rdd.compress", "true")
+
+sc = SparkContext(conf=conf)
 sc.setLogLevel("WARN")
 ssc = StreamingContext(sc, 5)
 
@@ -24,20 +31,13 @@ def getSparkSessionInstance(sparkConf):
     return globals()["sparkSessionSingletonInstance"]
 
 
-# --- THE FIX: DYNAMIC JAVA QUEUE ---
 def create_dynamic_kafka_stream(ssc, topic, group_id):
-    # 1. Create a Java LinkedBlockingQueue via Py4J
     jvm = ssc.sparkContext._gateway.jvm
     java_queue = jvm.java.util.concurrent.LinkedBlockingQueue()
 
-    # 2. Create the DStream from the Java Queue
-    # oneAtATime=False allows processing all RDDs currently in the queue
-    jstream = ssc._jssc.queueStream(java_queue, False)
-
-    # 3. Wrap in Python DStream so we can use .map(), .window()
+    jstream = ssc._jssc.queueStream(java_queue, True)
     dstream = DStream(jstream, ssc, ssc.sparkContext.serializer)
 
-    # 4. Producer Thread: Python Kafka -> Java Queue
     def producer_thread(sc, j_queue):
         print(f"Starting Consumer for {topic}...")
         try:
@@ -48,20 +48,25 @@ def create_dynamic_kafka_stream(ssc, topic, group_id):
                 group_id=group_id,
                 value_deserializer=lambda x: x.decode('utf-8')
             )
+
+            #chunks manageable for Kryo
+            MAX_BUFFER = 1500
+            PUSH_INTERVAL = 1.0
+
             buffer = []
             last_push = time.time()
+
             for message in consumer:
                 buffer.append(message.value)
 
-                # Push every 1 second or 1000 items
                 now = time.time()
-                if (now - last_push > 1.0) or (len(buffer) > 1000):
+                if (now - last_push > PUSH_INTERVAL) or (len(buffer) >= MAX_BUFFER):
                     if buffer:
-                        while j_queue.size() < 5:
-                            time.sleep(5)
-                            # A. Create Python RDD
+
+                        while j_queue.size() > 0:
+                            time.sleep(0.5)
+
                         rdd = sc.parallelize(buffer)
-                        # B. Convert to Java RDD and push to Java Queue
                         j_queue.add(rdd._jrdd)
                         buffer = []
                     last_push = now
@@ -75,13 +80,12 @@ def create_dynamic_kafka_stream(ssc, topic, group_id):
     return dstream
 
 
-print("Creating Energy Stream...")
-energy_stream = create_dynamic_kafka_stream(ssc, "energy_data", "queue_group_energy_v5")
 
-print("Creating Weather Stream...")
-weather_stream = create_dynamic_kafka_stream(ssc, "meterological_observations", "queue_group_weather_v5")
+print("Creating Streams with Kryo...")
+energy_stream = create_dynamic_kafka_stream(ssc, "energy_data", "group_energy_kryo_v1")
+weather_stream = create_dynamic_kafka_stream(ssc, "meterological_observations", "group_weather_kryo_v1")
 
-# --- PROCESSING LOGIC ---
+
 energy_windowed = energy_stream.window(60, 5)
 weather_windowed = weather_stream.window(60, 5)
 
@@ -95,7 +99,6 @@ def process_unified_batch(time, rdd):
     if rdd.isEmpty(): return
     print(f"========= Batch Time: {str(time)} =========")
     spark = getSparkSessionInstance(rdd.context.getConf())
-
 
     energy_schema = StructType([
         StructField("TimeUTC", StringType(), True),
@@ -113,7 +116,7 @@ def process_unified_batch(time, rdd):
     weather_rdd = rdd.filter(lambda x: x[0] == "weather").map(lambda x: x[1])
 
     if energy_rdd.isEmpty():
-        print("No Energy data in this window.")
+        print("Status: Waiting for Energy data...")
         return
 
     try:
@@ -123,7 +126,6 @@ def process_unified_batch(time, rdd):
         df_energy = df_energy.withColumn("event_ts_energy", to_timestamp(col("TimeUTC"), "yyyy-MM-dd'T'HH:mm:ss")) \
             .withColumn("join_hour", date_trunc("hour", col("event_ts_energy")))
 
-        # Weather parsing
         df_weather = df_weather.select(col("properties.observed").alias("observed_time")) \
             .withColumn("event_ts_weather", to_timestamp(col("observed_time"), "yyyy-MM-dd'T'HH:mm:ssX")) \
             .withColumn("join_hour", date_trunc("hour", col("event_ts_weather")))
@@ -140,7 +142,7 @@ def process_unified_batch(time, rdd):
             .option("kafka.bootstrap.servers", "kafka:9092") \
             .option("topic", "processed_data") \
             .save()
-        print(f"Batch written to Kafka. Rows: {output_df.count()}")
+        print(f"Batch written via Kryo. Count: {output_df.count()}")
     except Exception as e:
         print(f"Error processing batch: {e}")
 
