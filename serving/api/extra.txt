@@ -12,3 +12,7 @@ red panda:
 
 Port forwarding kafka //We don't do this
 kubectl port-forward kafka-controller-X 9092:9092
+
+
+
+kubectl logs -l app=backend-api;
