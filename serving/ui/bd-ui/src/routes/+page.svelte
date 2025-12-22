@@ -1,10 +1,13 @@
-<script lang="javascript">
+<script lang="js">
+  import TimeSeriesChart from "$lib/TimeSeriesChart.svelte";
+
   let data = $state([]);
   let useMockData = $state(true);
   let failureCount = $state(0);
   const maxFailures = 3;
 
-  // Mock data generator
+
+  // ---- MOCK DATA ----
   function generateMockData() {
     const now = new Date();
     return {
@@ -13,10 +16,11 @@
       windSpeed: +(2 + Math.random() * 5).toFixed(1),
       energy: +(500 + Math.random() * 200).toFixed(0),
       tempPrediction: +(15 + Math.random() * 10).toFixed(1),
-      energyForecast: +(500 + Math.random() * 200).toFixed(0),
+      energyForecast: +(500 + Math.random() * 200).toFixed(0)
     };
   }
 
+  // ---- FETCH ----
   async function fetchData() {
     if (useMockData) {
       data = [...data.slice(-19), generateMockData()];
@@ -31,146 +35,184 @@
       data = json;
       failureCount = 0;
     } catch (err) {
-      console.error("Failed to fetch data:", err);
       failureCount += 1;
     }
   }
 
-  // Polling effect
+  // ---- POLL ----
   $effect(() => {
-    fetchData();
+   
     const interval = setInterval(() => {
       if (failureCount >= maxFailures) {
-        console.warn("Max fetch failures reached. Stopping fetch.");
         clearInterval(interval);
       } else {
         fetchData();
       }
-    }, 5000);
-
+    }, 4000);
     return () => clearInterval(interval);
   });
+
+   fetchData();
+
+  // ---- DROPDOWN VARIABLES ----
+ /* 	let variables = [
+		"temperature", "windSpeed", "energy", "tempPrediction", "energyForecast"
+	];
+  */  let variables = [
+    { id:"temperature", label: "Temperature (°C)" },
+    { id:"windSpeed", label: "Wind Speed (m/s)" },
+    { id:"energy", label: "Energy Use (kWh)" },
+    { id:"tempPrediction", label: "Temperature Prediction (°C)" },
+    { id:"energyForecast", label: "Energy Forecast (kWh)" }
+  ];
+
+  let selected = $state(variables[0]);
+  
+  let test = $state("");
+
 </script>
 
 <div class="min-h-screen bg-gray-900 text-gray-100 p-6">
-  <header class="mb-6 flex justify-between items-center">
-    <div class="flex flex-col gap-2">
-      <h1 class="text-3xl font-bold text-white">Big Data Energy</h1>
-      <h2 class="text-1.5xl text-gray-300">DMI & EnergiFyn Dashboard</h2>
+
+  <!-- HEADER -->
+  <header class="mb-8 flex justify-between items-start">
+    <div class="flex flex-col gap-1">
+      <h1 class="text-3xl font-bold text-white">Big Data Energy Dashboard</h1>
+      <p class="text-gray-400">Live DMI Observations + SPARKS Predictions</p>
     </div>
-    <label class="flex items-center gap-2">
+
+    <label class="flex items-center gap-3">
       <span class="text-gray-200">Use Mock Data</span>
       <input
         type="checkbox"
+        class="toggle toggle-primary"
         checked={useMockData}
         onchange={(e) => useMockData.set(e.currentTarget.checked)}
-        class="toggle toggle-primary"
       />
     </label>
   </header>
 
-  <main class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
-    <div class="bg-gray-800 shadow rounded-lg p-6">
-      <h2 class="text-xl font-semibold text-gray-200">Temperature (°C)</h2>
-      <p class="text-3xl font-bold text-yellow-400 mt-2">
-        {data.length > 0 ? data[data.length - 1].temperature : "Loading..."}
-      </p>
-      <div class="h-2 w-full bg-gray-700 rounded mt-2">
-        <div
-          class="h-2 bg-yellow-400 rounded"
-          style="width: {data.length > 0
-            ? Math.min(data[data.length - 1].temperature * 5, 100) + '%'
-            : '0%'}"
-        ></div>
-      </div>
-    </div>
+  <!-- ─────────────────────────────────────────── -->
+  <!--  1. CURRENT OBSERVATIONS                    -->
+  <!-- ─────────────────────────────────────────── -->
+  <section class="mb-10">
+    <h2 class="text-2xl font-semibold text-white mb-4">Current Observations</h2>
 
-    <div class="bg-gray-800 shadow rounded-lg p-6">
-      <h2 class="text-xl font-semibold text-gray-200">Wind Speed (m/s)</h2>
-      <p class="text-2xl text-blue-400 mt-2">
-        {data.length > 0 ? data[data.length - 1].windSpeed : "Loading..."}
-      </p>
-      <div class="h-2 w-full bg-gray-700 rounded mt-2">
-        <div
-          class="h-2 bg-blue-400 rounded"
-          style="width: {data.length > 0
-            ? Math.min(data[data.length - 1].windSpeed * 15, 100) + '%'
-            : '0%'}"
-        ></div>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <!-- Temperature -->
+      <div class="bg-gray-800 p-6 rounded-xl shadow">
+        <h3 class="text-xl font-semibold text-gray-200">Temperature (°C)</h3>
+        <p class="text-3xl font-bold text-yellow-400 mt-2">
+          {data.length ? data.at(-1).temperature : "—"}
+        </p>
       </div>
-    </div>
 
-    <div class="bg-gray-800 shadow rounded-lg p-6">
-      <h2 class="text-xl font-semibold text-gray-200">
-        Energy Consumption (kWh)
-      </h2>
-      <p class="text-2xl text-green-400 mt-2">
-        {data.length > 0 ? data[data.length - 1].energy : "Loading..."}
-      </p>
-      <div class="h-2 w-full bg-gray-700 rounded mt-2">
-        <div
-          class="h-2 bg-green-400 rounded"
-          style="width: {data.length > 0
-            ? Math.min(data[data.length - 1].energy / 8, 100) + '%'
-            : '0%'}"
-        ></div>
+      <!-- Wind -->
+      <div class="bg-gray-800 p-6 rounded-xl shadow">
+        <h3 class="text-xl font-semibold text-gray-200">Wind Speed (m/s)</h3>
+        <p class="text-3xl font-bold text-blue-400 mt-2">
+          {data.length ? data.at(-1).windSpeed : "—"}
+        </p>
       </div>
-    </div>
-  </main>
 
-  <section class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-    <div class="bg-gray-800 shadow rounded-lg p-6">
-      <h2 class="text-xl font-semibold text-gray-200">
-        SPARKS Energy Prediction (kWh)
-      </h2>
-      <p class="text-2xl text-green-300 mt-2">
-        {data.length > 0 ? data[data.length - 1].energyForecast : "Loading..."}
-      </p>
-      <div class="h-2 w-full bg-gray-700 rounded mt-2">
-        <div
-          class="h-2 bg-green-300 rounded"
-          style="width: {data.length > 0
-            ? Math.min(data[data.length - 1].energyForecast / 8, 100) + '%'
-            : '0%'}"
-        ></div>
-      </div>
-    </div>
-
-    <div class="bg-gray-800 shadow rounded-lg p-6">
-      <h2 class="text-xl font-semibold text-gray-200">
-        Temperature Prediction (°C)
-      </h2>
-      <p class="text-2xl text-yellow-300 mt-2">
-        {data.length > 0 ? data[data.length - 1].tempPrediction : "Loading..."}
-      </p>
-      <div class="h-2 w-full bg-gray-700 rounded mt-2">
-        <div
-          class="h-2 bg-yellow-300 rounded"
-          style="width: {data.length > 0
-            ? Math.min(data[data.length - 1].tempPrediction * 5, 100) + '%'
-            : '0%'}"
-        ></div>
+      <!-- Energy -->
+      <div class="bg-gray-800 p-6 rounded-xl shadow">
+        <h3 class="text-xl font-semibold text-gray-200">Energy Use (kWh)</h3>
+        <p class="text-3xl font-bold text-green-400 mt-2">
+          {data.length ? data.at(-1).energy : "—"}
+        </p>
       </div>
     </div>
   </section>
 
-  <section class="mb-8">
-    <h2 class="text-xl font-semibold text-gray-200 mb-4">
-      Energy Usage vs SPARKS Prediction
-    </h2>
-    <div
-      class="w-full h-48 bg-gray-800 rounded-lg flex items-center justify-center text-gray-400"
-    >
-      Chart placeholder
+  <!-- ─────────────────────────────────────────── -->
+  <!--  2. PREDICTIONS & MODEL OUTPUT              -->
+  <!-- ─────────────────────────────────────────── -->
+  <section class="mb-10">
+    <h2 class="text-2xl font-semibold text-white mb-4">Predictions</h2>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <!-- Energy Forecast -->
+      <div class="bg-gray-800 p-6 rounded-xl shadow">
+        <h3 class="text-xl font-semibold text-gray-200">
+          SPARKS Energy Forecast (kWh)
+        </h3>
+        <p class="text-3xl font-bold text-green-300 mt-2">
+          {data.length ? data.at(-1).energyForecast : "—"}
+        </p>
+      </div>
+
+      <!-- Temp Forecast -->
+      <div class="bg-gray-800 p-6 rounded-xl shadow">
+        <h3 class="text-xl font-semibold text-gray-200">
+          Temperature Prediction (°C)
+        </h3>
+        <p class="text-3xl font-bold text-yellow-300 mt-2">
+          {data.length ? data.at(-1).tempPrediction : "—"}
+        </p>
+      </div>
     </div>
   </section>
 
+  <!-- ─────────────────────────────────────────── -->
+  <!--  3. TIME SERIES GRAPHS                      -->
+  <!-- ─────────────────────────────────────────── -->
+
+  <div class="mb-6 bg-gray-800 rounded-xl p-4 flex items-center justify-center h-32 text-gray-400">
+      <p>Debugging: Failurecount: {failureCount}</p>
+    </div>
+
+  <section class="mb-10">
+    <div class="flex justify-between mb-3">
+      <h2 class="text-2xl font-semibold text-white">Trends</h2>
+
+      <select
+        bind:value={selected.id}
+        class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1"
+      >
+        {#each variables as v}
+          <option value={v.id}>
+            {v.label}
+          </option>
+        {/each}
+        
+      </select>
+    
+    </div>
+
+
+    <input bind:value={test} />
+    <div class="bg-gray-800 rounded-xl p-4 flex items-center justify-center h-64 text-gray-400">
+      <!-- Replace with chart component -->
+      
+      Time-series chart for: {selected.id}
+      <div class="bg-gray-800 rounded-xl p-4 h-64">
+        <TimeSeriesChart data={data} variable={selected.id} />
+      </div>
+    </div>
+  </section>
+
+  <!-- ─────────────────────────────────────────── -->
+  <!--  4. BIG DATA OVERVIEW                       -->
+  <!-- ─────────────────────────────────────────── -->
   <section>
-    <h2 class="text-xl font-semibold text-gray-200 mb-4">Temperature Trends</h2>
-    <div
-      class="w-full h-48 bg-gray-800 rounded-lg flex items-center justify-center text-gray-400"
-    >
-      Chart placeholder
+    <h2 class="text-2xl font-semibold text-white mb-4">Big Data Overview</h2>
+
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div class="bg-gray-800 p-6 rounded-xl shadow">
+        <p class="text-gray-400">Meteorological Dataset</p>
+        <p class="text-2xl font-semibold text-white">1.39 GiB</p>
+      </div>
+
+      <div class="bg-gray-800 p-6 rounded-xl shadow">
+        <p class="text-gray-400">Energy Dataset</p>
+        <p class="text-2xl font-semibold text-white">890 MiB</p>
+      </div>
+
+      <div class="bg-gray-800 p-6 rounded-xl shadow">
+        <p class="text-gray-400">Processed Data Points</p>
+        <p class="text-2xl font-semibold text-white">Millions+</p>
+      </div>
     </div>
   </section>
 </div>

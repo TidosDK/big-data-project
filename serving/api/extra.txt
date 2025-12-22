@@ -1,0 +1,14 @@
+topics:
+energy_data
+meterological_observations
+processed_data
+
+port 9092/{topic}
+
+red panda:
+    kubectl port-forward redpanda-59f59f9859-rvz84 8080:8080
+
+
+
+Port forwarding kafka //We don't do this
+kubectl port-forward kafka-controller-X 9092:9092
