@@ -50,7 +50,7 @@ def create_dynamic_kafka_stream(ssc, topic, group_id):
             )
 
             #chunks manageable for Kryo
-            MAX_BUFFER = 1500
+            MAX_BUFFER = 1000
             PUSH_INTERVAL = 1.0
 
             buffer = []
@@ -104,11 +104,14 @@ def process_unified_batch(time, rdd):
         StructField("TimeUTC", StringType(), True),
         StructField("TimeDK", StringType(), True),
         StructField("HeatingCategory", StringType(), True),
+        StructField("Region", StringType(), True),
         StructField("ConsumptionkWh", DoubleType(), True)
     ])
     met_schema = StructType([
         StructField("properties", StructType([
-            StructField("observed", StringType(), True)
+            StructField("observed", StringType(), True),
+            StructField("parameterId", StringType(), True),
+            StructField("value", DoubleType(), True)
         ]))
     ])
 
