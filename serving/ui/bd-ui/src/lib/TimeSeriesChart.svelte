@@ -26,15 +26,14 @@
       backgroundColor: "transparent",
       tooltip: { trigger: "axis" },
       xAxis: {
-        type: "category",
+        type: "time",
         data: data.map((d) => d.timestamp),
         axisLabel: {
           color: "#ccc",
-          formatter: (value) =>
-            new Date(value).toLocaleTimeString("da-DK", {
-              hour: "2-digit",
-              minute: "2-digit"
-            })
+          formatter: {
+            // ECharts will automatically pick the best format
+            primary: '{HH}:{mm}:{ss}' 
+          }
         }
       },
       yAxis: {
@@ -48,7 +47,8 @@
           type: "line",
           smooth: true,
           symbol: "none",
-          data: data.map((d) => d[variable]),
+          // Map to [timestamp, value] array for 'time' axis
+          data: data.map((d) => [d.timestamp, d[variable]]),
           lineStyle: { width: 2, color: "#4ade80" }
         }
       ]

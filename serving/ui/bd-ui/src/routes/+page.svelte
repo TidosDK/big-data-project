@@ -1,218 +1,217 @@
 <script lang="js">
+  import { onMount } from "svelte";
   import TimeSeriesChart from "$lib/TimeSeriesChart.svelte";
 
-  let data = $state([]);
-  let useMockData = $state(true);
+  // State
+  let data = $state([]); 
+  let availableMetrics = $state([]); 
+  let selectedMetric = $state(""); 
   let failureCount = $state(0);
-  const maxFailures = 3;
+  const maxFailures = 10;
 
+  // HDFS State
+  let report = $state(null);
+  let loadingReport = $state(false);
 
-  // ---- MOCK DATA ----
-  function generateMockData() {
-    const now = new Date();
-    return {
-      timestamp: now.toISOString(),
-      temperature: +(15 + Math.random() * 10).toFixed(1),
-      windSpeed: +(2 + Math.random() * 5).toFixed(1),
-      energy: +(500 + Math.random() * 200).toFixed(0),
-      tempPrediction: +(15 + Math.random() * 10).toFixed(1),
-      energyForecast: +(500 + Math.random() * 200).toFixed(0)
-    };
+  // ---- INITIAL SETUP ----
+  onMount(async () => {
+    await fetchAvailableMetrics();
+    fetchData(); 
+  });
+
+  async function fetchAvailableMetrics() {
+    try {
+      const res = await fetch("http://localhost:3000/metrics");
+      const json = await res.json();
+      if (json.meterological_observations) {
+        availableMetrics = json.meterological_observations;
+        if (availableMetrics.length > 0) {
+          selectedMetric = availableMetrics[0];
+        }
+      }
+    } catch (err) {
+      console.error("Failed to load metrics:", err);
+    }
   }
 
-  // ---- FETCH ----
+  // ---- KAFKA DATA POLLING ----
   async function fetchData() {
-    if (useMockData) {
-      data = [...data.slice(-19), generateMockData()];
-      failureCount = 0;
-      return;
-    }
-
     try {
-      const res = await fetch("/api/data");
-      if (!res.ok) throw new Error("Network response was not ok");
+      const res = await fetch("http://localhost:3000/data");
+      if (!res.ok) throw new Error("Network response not ok");
+      
       const json = await res.json();
-      data = json;
+      const meteo = json.meterological_observations || {};
+
+      const newPoint = {
+        timestamp: new Date().toISOString(),
+      };
+
+      availableMetrics.forEach(metric => {
+        newPoint[metric] = meteo[metric]?.value ?? 0;
+      });
+
+      data = [...data.slice(-29), newPoint];
       failureCount = 0;
     } catch (err) {
+      console.error("Fetch error:", err);
       failureCount += 1;
     }
   }
 
-  // ---- POLL ----
-  $effect(() => {
-   
-    const interval = setInterval(() => {
-      if (failureCount >= maxFailures) {
-        clearInterval(interval);
-      } else {
-        fetchData();
+  // ---- HDFS REPORT FETCHING ----
+  async function fetchHdfsReport() {
+    loadingReport = true;
+    try {
+      const res = await fetch("http://localhost:3000/reports/latest");
+      const rawReport = await res.json();
+
+      // Everything related to rawReport must stay inside this block
+      if (rawReport.data) {
+        rawReport.data.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
       }
+      
+      // Update the global state
+      report = rawReport; 
+    } catch (e) {
+      console.error("HDFS Fetch failed", e);
+    } finally {
+      loadingReport = false;
+    }
+  }
+
+  // Polling interval
+  $effect(() => {
+    const interval = setInterval(() => {
+      if (failureCount < maxFailures) fetchData();
     }, 4000);
     return () => clearInterval(interval);
   });
 
-   fetchData();
-
-  // ---- DROPDOWN VARIABLES ----
- /* 	let variables = [
-		"temperature", "windSpeed", "energy", "tempPrediction", "energyForecast"
-	];
-  */  let variables = [
-    { id:"temperature", label: "Temperature (°C)" },
-    { id:"windSpeed", label: "Wind Speed (m/s)" },
-    { id:"energy", label: "Energy Use (kWh)" },
-    { id:"tempPrediction", label: "Temperature Prediction (°C)" },
-    { id:"energyForecast", label: "Energy Forecast (kWh)" }
-  ];
-
-  let selected = $state(variables[0]);
-  
-  let test = $state("");
-
+  const getLatestValue = (metric) => {
+    return data.length > 0 ? data.at(-1)[metric] : "—";
+  };
 </script>
 
 <div class="min-h-screen bg-gray-900 text-gray-100 p-6">
-
-  <!-- HEADER -->
-  <header class="mb-8 flex justify-between items-start">
-    <div class="flex flex-col gap-1">
-      <h1 class="text-3xl font-bold text-white">Big Data Energy Dashboard</h1>
-      <p class="text-gray-400">Live DMI Observations + SPARKS Predictions</p>
-    </div>
-
-    <label class="flex items-center gap-3">
-      <span class="text-gray-200">Use Mock Data</span>
-      <input
-        type="checkbox"
-        class="toggle toggle-primary"
-        checked={useMockData}
-        onchange={(e) => useMockData.set(e.currentTarget.checked)}
-      />
-    </label>
+  <header class="mb-8">
+    <h1 class="text-3xl font-bold text-white">Big Data Energy Dashboard</h1>
+    <p class="text-gray-400">Live Kafka Stream: Meteorological Observations</p>
   </header>
 
-  <!-- ─────────────────────────────────────────── -->
-  <!--  1. CURRENT OBSERVATIONS                    -->
-  <!-- ─────────────────────────────────────────── -->
   <section class="mb-10">
-    <h2 class="text-2xl font-semibold text-white mb-4">Current Observations</h2>
-
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-      <!-- Temperature -->
-      <div class="bg-gray-800 p-6 rounded-xl shadow">
-        <h3 class="text-xl font-semibold text-gray-200">Temperature (°C)</h3>
-        <p class="text-3xl font-bold text-yellow-400 mt-2">
-          {data.length ? data.at(-1).temperature : "—"}
-        </p>
-      </div>
-
-      <!-- Wind -->
-      <div class="bg-gray-800 p-6 rounded-xl shadow">
-        <h3 class="text-xl font-semibold text-gray-200">Wind Speed (m/s)</h3>
-        <p class="text-3xl font-bold text-blue-400 mt-2">
-          {data.length ? data.at(-1).windSpeed : "—"}
-        </p>
-      </div>
-
-      <!-- Energy -->
-      <div class="bg-gray-800 p-6 rounded-xl shadow">
-        <h3 class="text-xl font-semibold text-gray-200">Energy Use (kWh)</h3>
-        <p class="text-3xl font-bold text-green-400 mt-2">
-          {data.length ? data.at(-1).energy : "—"}
-        </p>
-      </div>
+    <h2 class="text-2xl font-semibold text-white mb-4">Latest Observations</h2>
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+      {#each availableMetrics.slice(0, 10) as metric}
+        <div class="bg-gray-800 p-6 rounded-xl shadow border border-gray-700">
+          <h3 class="text-sm font-medium text-gray-400 uppercase tracking-wider">{metric}</h3>
+          <p class="text-3xl font-bold text-blue-400 mt-2">
+            {getLatestValue(metric)}
+          </p>
+        </div>
+      {/each}
     </div>
   </section>
 
-  <!-- ─────────────────────────────────────────── -->
-  <!--  2. PREDICTIONS & MODEL OUTPUT              -->
-  <!-- ─────────────────────────────────────────── -->
   <section class="mb-10">
-    <h2 class="text-2xl font-semibold text-white mb-4">Predictions</h2>
-
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-      <!-- Energy Forecast -->
-      <div class="bg-gray-800 p-6 rounded-xl shadow">
-        <h3 class="text-xl font-semibold text-gray-200">
-          SPARKS Energy Forecast (kWh)
-        </h3>
-        <p class="text-3xl font-bold text-green-300 mt-2">
-          {data.length ? data.at(-1).energyForecast : "—"}
-        </p>
-      </div>
-
-      <!-- Temp Forecast -->
-      <div class="bg-gray-800 p-6 rounded-xl shadow">
-        <h3 class="text-xl font-semibold text-gray-200">
-          Temperature Prediction (°C)
-        </h3>
-        <p class="text-3xl font-bold text-yellow-300 mt-2">
-          {data.length ? data.at(-1).tempPrediction : "—"}
-        </p>
-      </div>
-    </div>
-  </section>
-
-  <!-- ─────────────────────────────────────────── -->
-  <!--  3. TIME SERIES GRAPHS                      -->
-  <!-- ─────────────────────────────────────────── -->
-
-  <div class="mb-6 bg-gray-800 rounded-xl p-4 flex items-center justify-center h-32 text-gray-400">
-      <p>Debugging: Failurecount: {failureCount}</p>
-    </div>
-
-  <section class="mb-10">
-    <div class="flex justify-between mb-3">
-      <h2 class="text-2xl font-semibold text-white">Trends</h2>
-
-      <select
-        bind:value={selected.id}
-        class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1"
-      >
-        {#each variables as v}
-          <option value={v.id}>
-            {v.label}
-          </option>
-        {/each}
-        
-      </select>
-    
-    </div>
-
-
-    <input bind:value={test} />
-    <div class="bg-gray-800 rounded-xl p-4 flex items-center justify-center h-64 text-gray-400">
-      <!-- Replace with chart component -->
+    <div class="flex justify-between items-center mb-6">
+      <h2 class="text-2xl font-semibold text-white">Live Trends</h2>
       
-      Time-series chart for: {selected.id}
-      <div class="bg-gray-800 rounded-xl p-4 h-64">
-        <TimeSeriesChart data={data} variable={selected.id} />
+      <div class="flex items-center gap-3">
+        <span class="text-sm text-gray-400">Select Metric:</span>
+        <select
+          bind:value={selectedMetric}
+          class="bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-blue-500 outline-none"
+        >
+          {#each availableMetrics as metric}
+            <option value={metric}>{metric}</option>
+          {/each}
+        </select>
       </div>
+    </div>
+
+    <div class="bg-gray-800 rounded-xl p-6 border border-gray-700">
+      {#if data.length > 1}
+        <div class="h-80 w-full">
+           <TimeSeriesChart {data} variable={selectedMetric} />
+        </div>
+      {:else}
+        <div class="h-80 flex items-center justify-center text-gray-500 italic">
+          Collecting stream data...
+        </div>
+      {/if}
     </div>
   </section>
 
-  <!-- ─────────────────────────────────────────── -->
-  <!--  4. BIG DATA OVERVIEW                       -->
-  <!-- ─────────────────────────────────────────── -->
-  <section>
-    <h2 class="text-2xl font-semibold text-white mb-4">Big Data Overview</h2>
-
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-      <div class="bg-gray-800 p-6 rounded-xl shadow">
-        <p class="text-gray-400">Meteorological Dataset</p>
-        <p class="text-2xl font-semibold text-white">1.39 GiB</p>
-      </div>
-
-      <div class="bg-gray-800 p-6 rounded-xl shadow">
-        <p class="text-gray-400">Energy Dataset</p>
-        <p class="text-2xl font-semibold text-white">890 MiB</p>
-      </div>
-
-      <div class="bg-gray-800 p-6 rounded-xl shadow">
-        <p class="text-gray-400">Processed Data Points</p>
-        <p class="text-2xl font-semibold text-white">Millions+</p>
-      </div>
+<section class="mt-10 bg-gray-900 border border-slate-800 rounded-xl p-5">
+  <div class="flex justify-between items-center mb-4">
+    <div>
+      <h2 class="text-lg font-bold text-white">Prediction Reports</h2>
+      <p class="text-xs text-slate-500">HDFS Batch Accuracy</p>
+      <p class="text-xs text-slate-500">Historical prediction vs. actual totals</p>
     </div>
-  </section>
+    <button 
+      onclick={fetchHdfsReport}
+      class="bg-blue-600 px-3 py-1.5 rounded text-xs font-semibold hover:bg-blue-500 transition"
+      disabled={loadingReport}
+    >
+      {loadingReport ? 'Retrieving...' : 'Get Latest Report'}
+    </button>
+  </div>
+
+  {#if report}
+    <div class="max-h-64 overflow-y-auto border border-slate-800 rounded-lg custom-scrollbar">
+      <table class="w-full text-left text-xs">
+        <thead class="sticky top-0 bg-slate-800 text-slate-400 uppercase text-[9px] tracking-wider z-10">
+          <tr>
+            <th class="px-4 py-2">Date</th>
+            <th class="px-4 py-2 text-right">Pred (M)</th>
+            <th class="px-4 py-2 text-right">Act (k)</th>
+            <th class="px-4 py-2 text-right">Diff</th>
+            <th class="px-4 py-2 text-center">Status</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-800">
+          {#each report.data as row}
+            <tr class="hover:bg-slate-800/40">
+              <td class="px-4 py-2 text-slate-400 whitespace-nowrap">
+                {new Date(row.timestamp).toLocaleDateString('da-DK', { month: '2-digit', day: '2-digit' })}
+              </td>
+              <td class="px-4 py-2 text-right font-mono text-blue-400">
+                {(row.predicted_total / 1000000).toFixed(1)}M
+              </td>
+              <td class="px-4 py-2 text-right font-mono text-emerald-400">
+                {(row.actual_total / 1000).toFixed(0)}k
+              </td>
+              <td class="px-4 py-2 text-right font-mono text-slate-500">
+                {Math.abs(row.diff_kwh / 1000000).toFixed(1)}M
+              </td>
+              <td class="px-4 py-2 text-center">
+                <div class="h-2 w-2 rounded-full bg-red-500 mx-auto shadow-[0_0_8px_rgba(239,68,68,0.5)]" title="High Skew"></div>
+              </td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
+  {:else}
+    <div class="text-center py-8 text-slate-600 text-sm border-2 border-dashed border-slate-800 rounded-lg">
+      Click 'Refresh' to load HDFS data.
+    </div>
+  {/if}
+</section>
+
+  <footer class="grid grid-cols-1 mt-6md:grid-cols-2 gap-6 opacity-60">
+     <div class="bg-gray-800 p-4 rounded-lg text-xs">
+        <p>Status: {failureCount > 0 ? 'Reconnecting...' : 'Connected to Kafka'}</p>
+        <p>Active Metrics: {availableMetrics.join(', ')}</p>
+     </div>
+  </footer>
 </div>
+
+<style>
+  /* Optional: Make the scrollbar look "Engineered" */
+  .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+  .custom-scrollbar::-webkit-scrollbar-track { background: #111827; }
+  .custom-scrollbar::-webkit-scrollbar-thumb { background: #374151; border-radius: 10px; }
+</style>
