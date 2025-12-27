@@ -2,47 +2,37 @@ from pyspark.sql import SparkSession
 from pyspark.ml import Pipeline
 from pyspark.ml.feature import VectorAssembler, StringIndexer, OneHotEncoder
 from pyspark.ml.regression import LinearRegression
-from pyspark.sql.functions import hour, col
+from pyspark.sql.functions import hour, col, lead
+from pyspark.sql.window import Window
 
-# 1. Setup
-spark = SparkSession.builder.appName("TrainEnergyModel").getOrCreate()
+spark = SparkSession.builder.appName("TrainNextValueModel").getOrCreate()
 
-# 2. Load Training Data
-# (Assuming you saved some data to /tmp/training_data or have a CSV)
-# For this example, we create dummy data to show the structure
 data = spark.createDataFrame([
-    ("Elvarme", 120.5, "2024-01-01T10:00:00"),
-    ("District", 80.2, "2024-01-01T11:00:00"),
-    ("Elvarme", 130.1, "2024-01-01T12:00:00"),
-    ("District", 85.0, "2024-01-01T13:00:00"),
-], ["HeatingCategory", "ConsumptionkWh", "TimeUTC"])
+    ("2024-01-01T09:00:00", "Elvarme", 100.0),
+    ("2024-01-01T10:00:00", "Elvarme", 120.0),
+    ("2024-01-01T11:00:00", "Elvarme", 115.0),
+    ("2024-01-01T12:00:00", "Elvarme", 130.0),
+], ["TimeUTC", "HeatingCategory", "ConsumptionkWh"])
 
-# 3. Feature Engineering
-# Extract Hour from Timestamp
-df = data.withColumn("Hour", hour(col("TimeUTC")))
+windowSpec = Window.partitionBy("HeatingCategory").orderBy("TimeUTC")
 
-# 4. Define the ML Pipeline
-# A. Convert 'HeatingCategory' string to a number index
-indexer = StringIndexer(inputCol="HeatingCategory", outputCol="HeatingIndex", handleInvalid="keep")
 
-# B. Convert index to One-Hot vector (standard for categorical data)
+df = data.withColumn("NextConsumption", lead("ConsumptionkWh", 1).over(windowSpec))
+
+
+df = df.na.drop()
+
+df = df.withColumn("Hour", hour(col("TimeUTC")))
+
+indexer = StringIndexer(inputCol="HeatingCategory", outputCol="HeatingIndex")
 encoder = OneHotEncoder(inputCols=["HeatingIndex"], outputCols=["HeatingVec"])
+assembler = VectorAssembler(inputCols=["Hour", "HeatingVec", "ConsumptionkWh"], outputCol="features")
 
-# C. Combine features (Hour, HeatingVec) into a single 'features' vector
-assembler = VectorAssembler(inputCols=["Hour", "HeatingVec"], outputCol="features")
+lr = LinearRegression(featuresCol="features", labelCol="NextConsumption")
 
-# D. Define the Model (Linear Regression)
-lr = LinearRegression(featuresCol="features", labelCol="ConsumptionkWh")
-
-# E. Build the Pipeline
 pipeline = Pipeline(stages=[indexer, encoder, assembler, lr])
 
-# 5. Train the Model
 model = pipeline.fit(df)
+model.write().overwrite().save("/tmp/energy_prediction_model")
 
-# 6. Save the Model to a path accessible by your Streaming Job
-model_path = "/tmp/energy_prediction_model"
-model.write().overwrite().save(model_path)
-
-print(f"Model saved to {model_path}")
-spark.stop()
+print("Forecast Model Saved.")
