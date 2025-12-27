@@ -63,6 +63,15 @@ app.get('/data', (req, res) => {
   res.json(result);
 });
 
+// List available metrics per topic
+app.get('/metrics', (req, res) => {
+  const result = {};
+  for (const [topic, metrics] of messageStore.entries()) {
+    result[topic] = Array.from(metrics.keys());
+  }
+  res.json(result);
+});
+
 // Get a specific metric in a topic
 app.get('/data/:topic/:metric', (req, res) => {
   const { topic, metric } = req.params;
@@ -90,27 +99,31 @@ const runConsumer = async () => {
   console.log('Kafka consumer connected');
 
   for (const topic of TOPICS) {
-    await consumer.subscribe({ topic, fromBeginning: false });
+    // Note: fromBeginning: false only gets new messages. 
+    // Set to true if you want to pull existing data on startup.
+    await consumer.subscribe({ topic, fromBeginning: true });
   }
 
   await consumer.run({
     eachMessage: async ({ topic, partition, message }) => {
       const parsed = parseMessage(message);
 
-      // Store each property as a separate metric
-      if (parsed?.properties) {
-        for (const [metric, value] of Object.entries(parsed.properties)) {
-          const serialized = {
-            timestamp: Number(message.timestamp),
-            partition,
-            offset: message.offset,
-            stationId: parsed.properties.stationId,
-            value,
-            observed: parsed.properties.observed,
-            coordinates: parsed.geometry?.coordinates || null,
-          };
-          pushMetric(topic, metric, serialized);
-        }
+      // Verify we have the expected DMI/Weather data structure
+      if (parsed?.properties?.parameterId) {
+        const metricName = parsed.properties.parameterId; // e.g., 'humidity'
+        
+        const serialized = {
+          timestamp: Number(message.timestamp),
+          partition,
+          offset: message.offset,
+          stationId: parsed.properties.stationId,
+          value: parsed.properties.value,
+          observed: parsed.properties.observed,
+          coordinates: parsed.geometry?.coordinates || null,
+        };
+
+        // This stores the message under its specific metric name
+        pushMetric(topic, metricName, serialized);
       }
     },
   });
