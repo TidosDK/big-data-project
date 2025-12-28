@@ -23,7 +23,7 @@ sc.setLogLevel("WARN")  # Less noise, more signal
 
 ssc = StreamingContext(sc, 10)
 
-#ssc.checkpoint("/data/checkpoints_fresh_v100")
+#ssc.checkpoint("/data/checkpoints_fresh_v200")
 
 def getSparkSessionInstance(sparkConf):
     if ("sparkSessionSingletonInstance" not in globals()):
@@ -115,17 +115,21 @@ def create_dynamic_kafka_stream(ssc, topic, group_id):
 print("Creating Streams...", flush=True)
 
 energy_stream = create_dynamic_kafka_stream(
-    ssc, "energy_data", "grp_energy_debug_RETRY_v7"
+    ssc, "energy_data", "grp_energy_debug_RETRY_v10"
 )
 weather_stream = create_dynamic_kafka_stream(
-    ssc, "meterological_observations", "grp_weather_debug_RETRY_v7"
+    ssc, "meterological_observations", "grp_weather_debug_RETRY_v10"
 )
 # --- PROCESSING ---
-energy_windowed = energy_stream.window(60, 10)
-weather_windowed = weather_stream.window(60, 10)
+#energy_windowed = energy_stream.window(60, 10)
+#weather_windowed = weather_stream.window(60, 10)
 
-energy_tagged = energy_windowed.map(lambda x: ("energy", x))
-weather_tagged = weather_windowed.map(lambda x: ("weather", x))
+#energy_tagged = energy_windowed.map(lambda x: ("energy", x))
+#weather_tagged = weather_windowed.map(lambda x: ("weather", x))
+
+energy_tagged = energy_stream.map(lambda x: ("energy", x))
+weather_tagged = weather_stream.map(lambda x: ("weather", x))
+
 
 unified_stream = energy_tagged.union(weather_tagged)
 
