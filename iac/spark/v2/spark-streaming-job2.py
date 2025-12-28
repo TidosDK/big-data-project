@@ -32,7 +32,7 @@ sc.setLogLevel("WARN")
 
 # Batch Interval is set: 10 seconds
 ssc = StreamingContext(sc, 10)
-ssc.checkpoint("/tmp/checkpoints")
+ssc.checkpoint("/data/checkpoints")
 
 
 def getSparkSessionInstance(sparkConf):
@@ -50,7 +50,7 @@ prediction_model = None
 
 def get_model():
     global prediction_model
-    model_path = "/tmp/energy_prediction_model"
+    model_path = "/data/energy_prediction_model"
 
     if prediction_model is None:
         try:
@@ -118,7 +118,7 @@ def create_dynamic_kafka_stream(ssc, topic, group_id):
                 value_deserializer=lambda x: x.decode('utf-8')
             )
 
-            #Small chunks prevent Driver OOM during broadcast
+            #Small chunks prevent Driver OOM
             MAX_BUFFER = 500
             buffer = []
 
@@ -148,8 +148,6 @@ def create_dynamic_kafka_stream(ssc, topic, group_id):
 
     return dstream
 
-
-# --- 4. STREAM SETUP ---
 print("Initializing Streams...")
 # Unique group IDs ensure we don't conflict with old consumers
 energy_stream = create_dynamic_kafka_stream(ssc, "energy_data", "grp_energy_final_v1")
@@ -177,7 +175,7 @@ def process_unified_batch(time, rdd):
     energy_schema = StructType([
         StructField("TimeUTC", StringType(), True),
         StructField("TimeDK", StringType(), True),
-        StructField("RegionName", StringType(), True),  # Raw field name
+        StructField("RegionName", StringType(), True),
         StructField("HeatingCategory", StringType(), True),
         StructField("ConsumptionkWh", DoubleType(), True)
     ])
@@ -186,7 +184,7 @@ def process_unified_batch(time, rdd):
         StructField("properties", StructType([
             StructField("observed", StringType(), True),
             StructField("parameterId", StringType(), True),
-            StructField("value", DoubleType(), True)  # Correctly typed
+            StructField("value", DoubleType(), True)
         ]))
     ])
 

@@ -46,7 +46,12 @@ spec:
           volumeMounts:
             - name: app
               mountPath: /opt/spark/app
+            - name: data-volume
+              mountPath: /data
       volumes:
         - name: app
           configMap:
             name: spark-streaming-configmap-v2
+        - name: data-volume
+          persistentVolumeClaim:
+            claimName: spark-streaming-pvc
