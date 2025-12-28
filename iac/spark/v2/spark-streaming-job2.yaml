@@ -1,7 +1,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: spark-stream-local
+  name: spark-stream-legacy-queue-v2
   namespace: bd-bd-gr-02
 spec:
   backoffLimit: 0
@@ -11,12 +11,12 @@ spec:
       containers:
         - name: spark-streaming
           image: bitnami/spark:3.5.2-debian-12-r1
-          imagePullPolicy: IfNotPresent
           env:
             - name: SPARK_DRIVER_HOST
               valueFrom:
                 fieldRef:
                   fieldPath: status.podIP
+
             - name: PYTHONPATH
               value: "/tmp/pyspark_lib:/opt/bitnami/spark/python/lib/py4j-0.10.9.7-src.zip:/opt/bitnami/spark/python"
           securityContext:
@@ -27,17 +27,15 @@ spec:
               echo ">>> Installing dependencies..."
               pip install kafka-python numpy --target=/tmp/pyspark_lib
               
-              echo ">>> Starting Spark (FORCE LOCAL)..."
+              echo ">>> Starting Spark (Legacy FileStream)..."
               /opt/bitnami/spark/bin/spark-submit \
               --master local[4] \
               --deploy-mode client \
-              --name energy-weather-local \
+              --name energy-weather-legacy \
               --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.2 \
               --conf "spark.driver.bindAddress=$(SPARK_DRIVER_HOST)" \
               --conf "spark.driver.host=$(SPARK_DRIVER_HOST)" \
-              --conf "spark.driver.extraJavaOptions=-XX:+UseG1GC" \
               --conf "spark.driver.memory=4g" \
-              --conf "spark.driver.memoryOverhead=1g" \
               /opt/spark/app/spark-streaming-job2.py
 
           volumeMounts:
