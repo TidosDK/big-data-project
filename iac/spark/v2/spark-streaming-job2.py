@@ -11,13 +11,11 @@ from kafka import KafkaConsumer
 from pyspark import SparkContext, SparkConf
 from pyspark.streaming import StreamingContext
 from pyspark.sql import SparkSession
-# ADDED: coalesce, lit (For handling missing values)
 from pyspark.sql.functions import col, to_timestamp, date_trunc, to_json, struct, hour, dayofmonth, month, year, \
     dayofweek, lit, coalesce
 from pyspark.sql.types import StructType, StructField, StringType, DoubleType
 from pyspark.ml import PipelineModel
 
-# --- PATHS ---
 STREAM_DIR = "/data/stream_buffer"
 TEMP_DIR = "/data/stream_temp"
 try:
@@ -31,7 +29,6 @@ conf = SparkConf().setAppName("EnergyWeather_Fix").set("spark.serializer", "org.
 sc = SparkContext(conf=conf)
 sc.setLogLevel("WARN")
 
-# INCREASED BATCH INTERVAL to 20s to catch matching data
 ssc = StreamingContext(sc, 20)
 
 
@@ -55,7 +52,6 @@ def get_model():
     return prediction_model
 
 
-# --- PRODUCER THREAD ---
 def kafka_to_file_producer():
     print("Starting Producer...", flush=True)
     try:
@@ -69,7 +65,6 @@ def kafka_to_file_producer():
         consumer.subscribe(['energy_data', 'meterological_observations'])
 
         buffer = []
-        # INCREASED BUFFER: Wait for more data to overlap
         MAX_BUFFER = 500
         last_flush = time.time()
 
@@ -82,7 +77,7 @@ def kafka_to_file_producer():
                         buffer.append(json.dumps(wrapper))
 
             now = time.time()
-            # Wait up to 10 seconds to collect matching energy/weather
+            # 10 seconds before it try to match energy/meteorological data
             if len(buffer) > 0 and (len(buffer) >= MAX_BUFFER or (now - last_flush) > 10.0):
                 timestamp = int(now * 1000)
                 filename = f"batch_{timestamp}.json"
@@ -105,7 +100,7 @@ t = threading.Thread(target=kafka_to_file_producer)
 t.daemon = True
 t.start()
 
-# --- PROCESSING ---
+
 text_dstream = ssc.textFileStream(STREAM_DIR)
 
 
@@ -162,7 +157,7 @@ def process_batch(time, rdd):
             ]))
 
         if df_energy is not None:
-            # JOIN
+
             joined_df = df_energy.join(df_weather, on="join_hour", how="left")
 
             model = get_model()
@@ -170,24 +165,23 @@ def process_batch(time, rdd):
 
             if model:
                 try:
-                    # Prepare Features
+
                     features_df = joined_df \
                         .withColumn("Hour", hour(col("event_ts_energy")).cast(DoubleType())) \
                         .withColumn("Day", dayofmonth(col("event_ts_energy")).cast(DoubleType())) \
                         .withColumn("Month", month(col("event_ts_energy")).cast(DoubleType())) \
                         .withColumn("Year", year(col("event_ts_energy")).cast(DoubleType())) \
                         .withColumn("DayOfWeek", dayofweek(col("event_ts_energy")).cast(DoubleType())) \
-                        .na.fill(0)  # Fills WeatherValue=0 if null
+                        .na.fill(0)
 
                     predictions = model.transform(features_df)
 
-                    # OUTPUT SELECTION
+
                     output_df = predictions.select(
                         col("TimeUTC").alias("key"),
                         to_json(struct(
                             col("TimeUTC"),
                             col("Region"),
-                            # FIX: Show 'MISSING' if null so we know why
                             coalesce(col("parameterId"), lit("MISSING_WEATHER")).alias("parameterId"),
                             col("WeatherValue"),
                             col("ConsumptionkWh").alias("Actual"),
