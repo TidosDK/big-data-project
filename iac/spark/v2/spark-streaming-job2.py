@@ -58,7 +58,6 @@ def kafka_to_file_producer():
         consumer = KafkaConsumer(
             bootstrap_servers=['kafka:9092'],
             auto_offset_reset='earliest',
-            # New group to re-read data
             group_id='grp_join_fix_v3',
             value_deserializer=lambda x: x.decode('utf-8')
         )
@@ -77,7 +76,7 @@ def kafka_to_file_producer():
                         buffer.append(json.dumps(wrapper))
 
             now = time.time()
-            # 10 seconds before it try to match energy/meteorological data
+
             if len(buffer) > 0 and (len(buffer) >= MAX_BUFFER or (now - last_flush) > 10.0):
                 timestamp = int(now * 1000)
                 filename = f"batch_{timestamp}.json"
