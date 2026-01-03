@@ -1,0 +1,20 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: energy-accuracy-report
+spec:
+  schedule: "0 2 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: report-generator
+              image: tidosdk/prediction-reporter:v0.10
+              env:
+                - name: HIVE_HOST
+                  value: "hiveserver2.bd-bd-gr-02.svc.cluster.local"
+                - name: HIVE_PORT
+                  value: "10000"
+              command: ["python3", "/app/main.py"]
+          restartPolicy: OnFailure
