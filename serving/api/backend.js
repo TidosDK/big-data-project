@@ -21,7 +21,7 @@ const TOPICS = (process.env.KAFKA_TOPICS || 'energy_data,meterological_observati
   .filter(Boolean);
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
-const MAX_MESSAGES_PER_METRIC = parseInt(process.env.MAX_MESSAGES_PER_METRIC || '3', 10);
+const MAX_MESSAGES_PER_METRIC = parseInt(process.env.MAX_MESSAGES_PER_METRIC || '100', 10);
 
 console.log({ BROKERS, TOPICS, PORT, MAX_MESSAGES_PER_METRIC });
 
@@ -184,7 +184,7 @@ const runConsumer = async () => {
   console.log('Kafka consumer connected');
 
   for (const topic of TOPICS) {
-    await consumer.subscribe({ topic, fromBeginning: true });
+    await consumer.subscribe({ topic, fromBeginning: false });
   }
 
   await consumer.run({
