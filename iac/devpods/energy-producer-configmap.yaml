@@ -6,16 +6,16 @@ data:
     from datetime import datetime
     from dateutil.relativedelta import relativedelta
 
-    limit = 100000
+    limit = 10000
     offset = 0
-    STATE_FILE = "/data/last_date.json"
+    STATE_FILE = "/data/energy_last_date.json"
 
     failed_messages = []
 
     BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
     TOPIC = os.getenv("KAFKA_TOPIC", "energy_data")
     API = os.getenv("API_URL", "https://api.energidataservice.dk/dataset/PrivateConsumptionHeatingHour")
-    POLL_SECS = int(os.getenv("POLL_SECONDS", "5")) # Changable
+    POLL_SECS = int(os.getenv("POLL_SECONDS", "70")) # Changable
 
     WAIT_FOR_NEXT_DATA_CHECK = 1800 #If no data between dates then wait 30 minutes
     WAIT_AFTER_ERROR = 300 #If ERROR, wait 5 minutes
@@ -44,7 +44,7 @@ data:
 
     def read_state():
         if not os.path.exists(STATE_FILE):
-            return datetime(2024, 1, 1)
+            return datetime(2025, 1, 5)
         with open(STATE_FILE, "r") as f:
             state = json.load(f)
             return datetime.fromisoformat(state["last_date"])
@@ -118,7 +118,12 @@ data:
                 requests.exceptions.HTTPError,
                 json.JSONDecodeError) as e:
                 print(f"HTTP/fetching error: {e}", file=sys.stderr)
-                time.sleep(WAIT_AFTER_ERROR)
+                status = getattr(getattr(e, "response", None), "status_code", None)
+                if status == 403:
+                    print("403 error recieved - assume IP block - will sleep for 1 hour", file=sys.stderr)
+                    time.sleep(3600)
+                else:
+                    time.sleep(WAIT_AFTER_ERROR)
                 continue #Retries if error
             
             all_records_between_dates.extend(records)   
