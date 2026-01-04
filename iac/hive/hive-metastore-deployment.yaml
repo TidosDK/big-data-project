@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hive-metastore
+  namespace: bd-bd-gr-02
+  labels:
+    app: hive-metastore
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hive-metastore
+  template:
+    metadata:
+      labels:
+        app: hive-metastore
+    spec:
+      initContainers:
+        - name: init-wait-db
+          image: busybox:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              until nc -z -v -w90 postgresql 5432; do
+                echo "Waiting for Hive Metastore DB to be ready..."
+                sleep 5
+              done
+      containers:
+        - name: metastore
+          image: rtdl/hive-metastore:3.1.2
+          command: ["bash", "entrypoint/entrypoint.sh"]
+          ports:
+            - containerPort: 9083
+              name: thrift
+          volumeMounts:
+            - name: hive-config
+              mountPath: /opt/apache-hive-metastore-3.1.2-bin/conf
+            - name: entrypoint
+              mountPath: /opt/entrypoint
+      volumes:
+        - name: hive-config
+          configMap:
+            name: hive-metastore-config
+        - name: entrypoint
+          configMap:
+            name: hive-metastore-entrypoint

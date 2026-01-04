@@ -9,3 +9,7 @@ module "kafka" {
 module "spark" {
   source = "./spark"
 }
+
+module "hive" {
+  source = "./hive"
+}

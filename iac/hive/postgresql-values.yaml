@@ -1,0 +1,7 @@
+auth:
+  username: root
+  password: pwd1234
+  database: hive
+
+primary:
+  extendedConfiguration: "password_encryption=md5"
