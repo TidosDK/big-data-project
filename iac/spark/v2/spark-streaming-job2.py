@@ -7,6 +7,7 @@ import time
 import json
 import shutil
 import threading
+import glob
 from kafka import KafkaConsumer
 from pyspark import SparkContext, SparkConf
 from pyspark.streaming import StreamingContext
@@ -18,23 +19,31 @@ from pyspark.ml import PipelineModel
 
 STREAM_DIR = "/data/stream_buffer"
 TEMP_DIR = "/data/stream_temp"
+
 try:
     os.makedirs(STREAM_DIR, exist_ok=True)
     os.makedirs(TEMP_DIR, exist_ok=True)
-    os.system(f"rm -rf {STREAM_DIR}/*")
 except:
     pass
 
-conf = SparkConf().setAppName("EnergyWeather_Fix").set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+conf = SparkConf() \
+    .setAppName("EnergyWeather_RateLimited") \
+    .set("spark.serializer", "org.apache.spark.serializer.KryoSerializer") \
+    .set("spark.driver.memory", "4g") \
+    .set("spark.executor.memory", "4g")
+
 sc = SparkContext(conf=conf)
 sc.setLogLevel("WARN")
 
-ssc = StreamingContext(sc, 20)
+ssc = StreamingContext(sc, 60)
 
 
 def getSparkSessionInstance(sparkConf):
     if ("sparkSessionSingletonInstance" not in globals()):
-        globals()["sparkSessionSingletonInstance"] = SparkSession.builder.config(conf=sparkConf).getOrCreate()
+        globals()["sparkSessionSingletonInstance"] = SparkSession \
+            .builder \
+            .config(conf=sparkConf) \
+            .getOrCreate()
     return globals()["sparkSessionSingletonInstance"]
 
 
@@ -52,22 +61,56 @@ def get_model():
     return prediction_model
 
 
+def cleanup_old_files():
+    while True:
+        time.sleep(60)
+        now = time.time()
+        cutoff = now - 14400
+
+        try:
+            files = glob.glob(os.path.join(STREAM_DIR, "batch_*.json"))
+            for f in files:
+                if os.path.getmtime(f) < cutoff:
+                    try:
+                        os.remove(f)
+                    except OSError:
+                        pass
+
+            temp_files = glob.glob(os.path.join(TEMP_DIR, "batch_*.json"))
+            for f in temp_files:
+                if os.path.getmtime(f) < cutoff:
+                    try:
+                        os.remove(f)
+                    except OSError:
+                        pass
+        except Exception as e:
+            print(f"Cleanup Warn: {e}", flush=True)
+
+
 def kafka_to_file_producer():
-    print("Starting Producer...", flush=True)
+    print("Starting Rate-Limited Producer...", flush=True)
     try:
         consumer = KafkaConsumer(
             bootstrap_servers=['kafka:9092'],
             auto_offset_reset='earliest',
-            group_id='grp_join_fix_v3',
+            group_id='grp_streaming_ratelimit_v1',
             value_deserializer=lambda x: x.decode('utf-8')
         )
         consumer.subscribe(['energy_data', 'meterological_observations'])
 
         buffer = []
-        MAX_BUFFER = 500
+        MAX_BUFFER = 1000
         last_flush = time.time()
 
         while True:
+            try:
+                pending_files = len(os.listdir(STREAM_DIR))
+                if pending_files > 500:
+                    time.sleep(2)
+                    continue
+            except:
+                pass
+
             msg_dict = consumer.poll(timeout_ms=500)
             if msg_dict:
                 for tp, messages in msg_dict.items():
@@ -76,35 +119,38 @@ def kafka_to_file_producer():
                         buffer.append(json.dumps(wrapper))
 
             now = time.time()
-
-            if len(buffer) > 0 and (len(buffer) >= MAX_BUFFER or (now - last_flush) > 10.0):
+            if len(buffer) > 0 and (len(buffer) >= MAX_BUFFER or (now - last_flush) > 5.0):
                 timestamp = int(now * 1000)
                 filename = f"batch_{timestamp}.json"
                 temp_path = os.path.join(TEMP_DIR, filename)
                 final_path = os.path.join(STREAM_DIR, filename)
+
                 try:
                     with open(temp_path, 'w') as f:
-                        for record in buffer: f.write(record + "\n")
+                        for record in buffer:
+                            f.write(record + "\n")
                     shutil.move(temp_path, final_path)
-                    print(f"DEBUG: Flushed {len(buffer)} records (Buffer Window: 10s)", flush=True)
+                    # print(f"DEBUG: Flushed {len(buffer)} records.", flush=True)
                     buffer = []
                     last_flush = now
-                except:
-                    pass
-    except:
-        pass
+                except Exception as e:
+                    print(f"Write Error: {e}", flush=True)
+    except Exception as e:
+        print(f"Producer Crash: {e}", flush=True)
 
 
-t = threading.Thread(target=kafka_to_file_producer)
-t.daemon = True
-t.start()
+t1 = threading.Thread(target=kafka_to_file_producer)
+t1.daemon = True
+t1.start()
 
+t2 = threading.Thread(target=cleanup_old_files)
+t2.daemon = True
+t2.start()
 
 text_dstream = ssc.textFileStream(STREAM_DIR)
 
 
 def process_batch(time, rdd):
-    print(f"=== Batch: {str(time)} ===", flush=True)
     if rdd.isEmpty(): return
 
     spark = getSparkSessionInstance(rdd.context.getConf())
@@ -114,8 +160,6 @@ def process_batch(time, rdd):
 
         energy_df_raw = raw_df.filter("topic = 'energy_data'").select("payload")
         weather_df_raw = raw_df.filter("topic = 'meterological_observations'").select("payload")
-
-        print(f"DEBUG: Counts -> Energy: {energy_df_raw.count()}, Weather: {weather_df_raw.count()}", flush=True)
 
         energy_schema = StructType([
             StructField("TimeUTC", StringType(), True),
@@ -135,7 +179,8 @@ def process_batch(time, rdd):
 
         if not energy_df_raw.isEmpty():
             df_energy = spark.read.schema(energy_schema).json(energy_df_raw.rdd.map(lambda x: x.payload))
-            df_energy = df_energy.withColumnRenamed("RegionName", "Region") \
+            df_energy = df_energy \
+                .withColumnRenamed("RegionName", "Region") \
                 .withColumn("event_ts_energy", to_timestamp(col("TimeUTC"), "yyyy-MM-dd'T'HH:mm:ss")) \
                 .withColumn("join_hour", date_trunc("hour", col("event_ts_energy")))
 
@@ -156,39 +201,37 @@ def process_batch(time, rdd):
             ]))
 
         if df_energy is not None:
-
             joined_df = df_energy.join(df_weather, on="join_hour", how="left")
 
             model = get_model()
             output_df = None
 
+            features_df = joined_df \
+                .withColumn("Hour", hour(col("event_ts_energy")).cast(DoubleType())) \
+                .withColumn("Day", dayofmonth(col("event_ts_energy")).cast(DoubleType())) \
+                .withColumn("Month", month(col("event_ts_energy")).cast(DoubleType())) \
+                .withColumn("Year", year(col("event_ts_energy")).cast(DoubleType())) \
+                .withColumn("DayOfWeek", dayofweek(col("event_ts_energy")).cast(DoubleType())) \
+                .withColumn("parameterId", coalesce(col("parameterId"), lit("MISSING"))) \
+                .withColumn("WeatherValue", coalesce(col("WeatherValue"), lit(0.0))) \
+                .na.fill(0)
+
             if model:
                 try:
-
-                    features_df = joined_df \
-                        .withColumn("Hour", hour(col("event_ts_energy")).cast(DoubleType())) \
-                        .withColumn("Day", dayofmonth(col("event_ts_energy")).cast(DoubleType())) \
-                        .withColumn("Month", month(col("event_ts_energy")).cast(DoubleType())) \
-                        .withColumn("Year", year(col("event_ts_energy")).cast(DoubleType())) \
-                        .withColumn("DayOfWeek", dayofweek(col("event_ts_energy")).cast(DoubleType())) \
-                        .na.fill(0)
-
                     predictions = model.transform(features_df)
-
-
                     output_df = predictions.select(
                         col("TimeUTC").alias("key"),
                         to_json(struct(
                             col("TimeUTC"),
                             col("Region"),
-                            coalesce(col("parameterId"), lit("MISSING_WEATHER")).alias("parameterId"),
+                            col("parameterId"),
                             col("WeatherValue"),
                             col("ConsumptionkWh").alias("Actual"),
                             col("prediction").alias("Predicted")
                         )).alias("value")
                     )
                 except Exception as e:
-                    print(f"PREDICTION ERROR: {e}", flush=True)
+                    print(f"Prediction Error: {e}", flush=True)
                     output_df = joined_df.select(col("TimeUTC").alias("key"), to_json(struct("*")).alias("value"))
             else:
                 output_df = joined_df.select(col("TimeUTC").alias("key"), to_json(struct("*")).alias("value"))
@@ -198,10 +241,10 @@ def process_batch(time, rdd):
                 .option("kafka.bootstrap.servers", "kafka:9092") \
                 .option("topic", "processed_data") \
                 .save()
-            print(f"SUCCESS: Written {output_df.count()} rows", flush=True)
+            print(f"BATCH SUCCESS: {output_df.count()} rows processed.", flush=True)
 
     except Exception as e:
-        print(f"Batch Failed: {e}", flush=True)
+        print(f"Batch Error: {e}", flush=True)
 
 
 text_dstream.foreachRDD(process_batch)

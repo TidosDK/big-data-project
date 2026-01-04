@@ -11,12 +11,18 @@ spec:
       containers:
         - name: spark-streaming
           image: bitnami/spark:3.5.2-debian-12-r1
+          resources:
+            requests:
+              memory: "5Gi"
+              cpu: "1000m"
+            limits:
+              memory: "5Gi"
+              cpu: "2000m"
           env:
             - name: SPARK_DRIVER_HOST
               valueFrom:
                 fieldRef:
                   fieldPath: status.podIP
-
             - name: PYTHONPATH
               value: "/tmp/pyspark_lib:/opt/bitnami/spark/python/lib/py4j-0.10.9.7-src.zip:/opt/bitnami/spark/python"
           securityContext:
@@ -27,15 +33,17 @@ spec:
               echo ">>> Installing dependencies..."
               pip install kafka-python numpy --target=/tmp/pyspark_lib
               
-              echo ">>> Starting Spark (Legacy FileStream)..."
+              echo ">>> Starting Stable Spark Job..."
+              # Note: We set driver memory slightly less than the container limit (4g vs 5Gi)
               /opt/bitnami/spark/bin/spark-submit \
               --master local[4] \
               --deploy-mode client \
-              --name energy-weather-legacy \
+              --name energy-weather-stable \
               --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.2 \
               --conf "spark.driver.bindAddress=$(SPARK_DRIVER_HOST)" \
               --conf "spark.driver.host=$(SPARK_DRIVER_HOST)" \
               --conf "spark.driver.memory=4g" \
+              --conf "spark.executor.memory=4g" \
               /opt/spark/app/spark-streaming-job2.py
 
           volumeMounts:

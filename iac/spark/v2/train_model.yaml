@@ -22,90 +22,115 @@ spec:
               echo ">>> Installing numpy..."
               pip install numpy --target=/tmp/pyspark_lib
               
-              echo ">>> Creating Kafka-Training Script..."
-              cat <<EOF > /tmp/train_kafka.py
+              echo ">>> Creating Optimized Training Script..."
+              cat <<EOF > /tmp/train_optimized.py
               import sys
               sys.path.insert(0, "/tmp/pyspark_lib")
               
               from pyspark.sql import SparkSession
-              from pyspark.sql.functions import col, from_json, to_timestamp, hour, dayofmonth, month, year, dayofweek
+              from pyspark.sql.functions import col, from_json, to_timestamp, date_trunc, hour, dayofmonth, month, year, dayofweek, avg
               from pyspark.sql.types import StructType, StructField, StringType, DoubleType
               from pyspark.ml import Pipeline
-              from pyspark.ml.feature import VectorAssembler
+              from pyspark.ml.feature import VectorAssembler, StringIndexer, OneHotEncoder
               from pyspark.ml.regression import LinearRegression
               
-              spark = SparkSession.builder.appName("KafkaTrainer").getOrCreate()
+              spark = SparkSession.builder \
+                  .appName("OptimizedTrainer") \
+                  .config("spark.driver.memory", "3g") \
+                  .getOrCreate()
               spark.sparkContext.setLogLevel("WARN")
 
-              print(">>> Reading from Kafka 'energy_data' (Earliest)...")
-              
-              # 1. READ KAFKA (Batch Mode)
-              # We read the entire topic history as a static DataFrame
-              raw_kafka_df = spark.read \
-                  .format("kafka") \
-                  .option("kafka.bootstrap.servers", "kafka:9092") \
-                  .option("subscribe", "energy_data") \
-                  .option("startingOffsets", "earliest") \
-                  .load()
-              
-              # 2. PARSE JSON
-              # Schema must match your producer's format
-              json_schema = StructType([
+              # 1. READ ENERGY
+              print(">>> Reading Energy Data...")
+              e_schema = StructType([
                   StructField("TimeUTC", StringType(), True),
                   StructField("RegionName", StringType(), True),
                   StructField("ConsumptionkWh", DoubleType(), True)
               ])
               
-              parsed_df = raw_kafka_df.select(
-                  from_json(col("value").cast("string"), json_schema).alias("data")
-              ).select("data.*")
-              
-              # 3. FEATURE ENGINEERING
-              print(">>> Transforming Data for Training...")
-              train_df = parsed_df \
+              df_energy = spark.read.format("kafka") \
+                  .option("kafka.bootstrap.servers", "kafka:9092") \
+                  .option("subscribe", "energy_data") \
+                  .option("startingOffsets", "earliest") \
+                  .load() \
+                  .select(from_json(col("value").cast("string"), e_schema).alias("data")).select("data.*") \
+                  .withColumnRenamed("RegionName", "Region") \
                   .withColumn("ts", to_timestamp(col("TimeUTC"))) \
+                  .withColumn("join_hour", date_trunc("hour", col("ts"))) \
+                  .na.drop()
+
+              # 2. READ WEATHER & AGGREGATE (THE FIX)
+              print(">>> Reading & Aggregating Weather Data...")
+              w_schema = StructType([
+                  StructField("properties", StructType([
+                      StructField("observed", StringType(), True),
+                      StructField("parameterId", StringType(), True),
+                      StructField("value", DoubleType(), True)
+                  ]))
+              ])
+              
+              df_weather_raw = spark.read.format("kafka") \
+                  .option("kafka.bootstrap.servers", "kafka:9092") \
+                  .option("subscribe", "meterological_observations") \
+                  .option("startingOffsets", "earliest") \
+                  .load() \
+                  .select(from_json(col("value").cast("string"), w_schema).alias("data")) \
+                  .select(
+                      col("data.properties.observed").alias("obs_time"),
+                      col("data.properties.parameterId").alias("parameterId"),
+                      col("data.properties.value").alias("WeatherValue")
+                  ) \
+                  .filter(col("parameterId").isin(["temp_dew", "temp_dry"])) \
+                  .withColumn("ts_weather", to_timestamp(col("obs_time"))) \
+                  .withColumn("join_hour", date_trunc("hour", col("ts_weather")))
+
+              # OPTIMIZATION: Calculate Average Weather per Hour per Parameter
+              # This prevents the 2 Billion Row explosion
+              df_weather = df_weather_raw \
+                  .groupBy("join_hour", "parameterId") \
+                  .agg(avg("WeatherValue").alias("WeatherValue"))
+
+              # 3. JOIN
+              print(">>> Joining datasets (Optimized)...")
+              train_df = df_energy.join(df_weather, on="join_hour", how="inner") \
                   .withColumn("Year", year(col("ts")).cast("double")) \
                   .withColumn("Month", month(col("ts")).cast("double")) \
                   .withColumn("Day", dayofmonth(col("ts")).cast("double")) \
                   .withColumn("Hour", hour(col("ts")).cast("double")) \
                   .withColumn("DayOfWeek", dayofweek(col("ts")).cast("double")) \
-                  .withColumn("ConsumptionkWh", col("ConsumptionkWh").cast("double")) \
-                  .na.drop() # Drop rows with bad/missing data
-              
-              # Check if we actually got data
-              count = train_df.count()
-              print(f"DEBUG: Found {count} valid training records from Kafka.")
-              
-              if count == 0:
-                  print("ERROR: No data found in Kafka topic! Cannot train model.")
-                  sys.exit(1)
-              
-              train_df.show(5)
-              
+                  .withColumn("ConsumptionkWh", col("ConsumptionkWh").cast("double"))
+
+              # Check count - should be much smaller now!
+              print(f"DEBUG: Training on {train_df.count()} rows.")
+
               # 4. TRAIN MODEL
-              print(">>> Training Linear Regression Model...")
+              reg_indexer = StringIndexer(inputCol="Region", outputCol="regIndex", handleInvalid="keep")
+              reg_encoder = OneHotEncoder(inputCols=["regIndex"], outputCols=["regVec"])
+
+              param_indexer = StringIndexer(inputCol="parameterId", outputCol="paramIndex", handleInvalid="keep")
+              param_encoder = OneHotEncoder(inputCols=["paramIndex"], outputCols=["paramVec"])
+
               assembler = VectorAssembler(
-                  inputCols=["Year", "Month", "Day", "Hour", "DayOfWeek"], 
+                  inputCols=["Year", "Month", "Day", "Hour", "DayOfWeek", "regVec", "paramVec", "WeatherValue"],
                   outputCol="features"
               )
-              
+
               lr = LinearRegression(featuresCol="features", labelCol="ConsumptionkWh")
-              pipeline = Pipeline(stages=[assembler, lr])
               
+              pipeline = Pipeline(stages=[reg_indexer, reg_encoder, param_indexer, param_encoder, assembler, lr])
+              
+              print(">>> Training Region-Aware Model...")
               model = pipeline.fit(train_df)
               
-              # 5. SAVE MODEL
               output_path = "/data/energy_prediction_model"
               model.write().overwrite().save(output_path)
-              print(f"SUCCESS: Model trained on {count} records and saved to {output_path}")
+              print("SUCCESS: Optimized Model saved.")
               EOF
               
-              echo ">>> Running Spark Submit..."
-              # Note: We include the Kafka package here too!
               /opt/bitnami/spark/bin/spark-submit \
               --master local[1] \
               --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.2 \
-              /tmp/train_kafka.py
+              /tmp/train_optimized.py
 
           volumeMounts:
             - name: data-volume
