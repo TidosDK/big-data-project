@@ -19,10 +19,10 @@ spec:
           command: ["/bin/bash", "-c"]
           args:
             - |
-              echo ">>> Installing numpy..."
+              echo "Installing numpy..."
               pip install numpy --target=/tmp/pyspark_lib
               
-              echo ">>> Creating Optimized Training Script..."
+              echo "Creating Optimized Training Script..."
               cat <<EOF > /tmp/train_optimized.py
               import sys
               sys.path.insert(0, "/tmp/pyspark_lib")
@@ -40,8 +40,8 @@ spec:
                   .getOrCreate()
               spark.sparkContext.setLogLevel("WARN")
 
-              # 1. READ ENERGY
-              print(">>> Reading Energy Data...")
+              
+              print("Reading Energy Data...")
               e_schema = StructType([
                   StructField("TimeUTC", StringType(), True),
                   StructField("RegionName", StringType(), True),
@@ -59,8 +59,8 @@ spec:
                   .withColumn("join_hour", date_trunc("hour", col("ts"))) \
                   .na.drop()
 
-              # 2. READ WEATHER & AGGREGATE (THE FIX)
-              print(">>> Reading & Aggregating Weather Data...")
+              
+              print("Reading & Aggregating Weather Data...")
               w_schema = StructType([
                   StructField("properties", StructType([
                       StructField("observed", StringType(), True),
@@ -84,14 +84,13 @@ spec:
                   .withColumn("ts_weather", to_timestamp(col("obs_time"))) \
                   .withColumn("join_hour", date_trunc("hour", col("ts_weather")))
 
-              # OPTIMIZATION: Calculate Average Weather per Hour per Parameter
-              # This prevents the 2 Billion Row explosion
+            
               df_weather = df_weather_raw \
                   .groupBy("join_hour", "parameterId") \
                   .agg(avg("WeatherValue").alias("WeatherValue"))
 
-              # 3. JOIN
-              print(">>> Joining datasets (Optimized)...")
+
+              print("Joining datasets (Optimized)...")
               train_df = df_energy.join(df_weather, on="join_hour", how="inner") \
                   .withColumn("Year", year(col("ts")).cast("double")) \
                   .withColumn("Month", month(col("ts")).cast("double")) \
@@ -100,10 +99,9 @@ spec:
                   .withColumn("DayOfWeek", dayofweek(col("ts")).cast("double")) \
                   .withColumn("ConsumptionkWh", col("ConsumptionkWh").cast("double"))
 
-              # Check count - should be much smaller now!
+
               print(f"DEBUG: Training on {train_df.count()} rows.")
 
-              # 4. TRAIN MODEL
               reg_indexer = StringIndexer(inputCol="Region", outputCol="regIndex", handleInvalid="keep")
               reg_encoder = OneHotEncoder(inputCols=["regIndex"], outputCols=["regVec"])
 
@@ -119,7 +117,7 @@ spec:
               
               pipeline = Pipeline(stages=[reg_indexer, reg_encoder, param_indexer, param_encoder, assembler, lr])
               
-              print(">>> Training Region-Aware Model...")
+              print("Training Region-Aware Model...")
               model = pipeline.fit(train_df)
               
               output_path = "/data/energy_prediction_model"

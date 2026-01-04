@@ -30,10 +30,10 @@ spec:
           command: ["/bin/bash", "-c"]
           args:
             - |
-              echo ">>> Installing dependencies..."
+              echo "Installing dependencies..."
               pip install kafka-python numpy --target=/tmp/pyspark_lib
               
-              echo ">>> Starting Stable Spark Job..."
+              echo "Starting Stable Spark Job..."
               # Note: We set driver memory slightly less than the container limit (4g vs 5Gi)
               /opt/bitnami/spark/bin/spark-submit \
               --master local[4] \
